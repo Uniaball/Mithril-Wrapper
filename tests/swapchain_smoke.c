@@ -48,8 +48,9 @@ typedef int   (*eglBindAPI_fn)(int);
 static void* MakeMetalLayer(void) {
     Class layerClass = objc_getClass("CAMetalLayer");
     if (!layerClass) return (void*)0x1;
-    void* layer = (void*)objc_msgSend((id)layerClass, sel_registerName("new"));
-    return layer;
+    typedef id (*NewFn)(id, SEL);
+    NewFn alloc = (NewFn)&objc_msgSend;
+    return (void*)alloc((id)layerClass, sel_registerName("new"));
 }
 #endif
 
