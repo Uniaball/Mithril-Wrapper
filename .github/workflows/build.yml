@@ -94,7 +94,7 @@ jobs:
           export VK_ICD_FILENAMES="$(brew --prefix)/share/vulkan/icd.d/MoltenVK_icd.json"
           export VK_LOADER_DEBUG=error
           export LD_LIBRARY_PATH="$PWD/output"
-          clang -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl -lobjc
+          clang -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl -lobjc -framework QuartzCore
           output=$(./tests/swapchain_smoke)
           echo "$output"
           echo "$output" | grep -q "SWAPCHAIN SMOKE ALL PASSED"
