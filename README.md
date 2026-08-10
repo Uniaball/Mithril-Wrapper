@@ -19,6 +19,12 @@ GL → Vulkan → Metal（MoltenVK），无 OpenGL ES 参与。
   - **MRT**：`src/gl/fbo.cpp` color[8] 多附件槽 + `glDrawBuffers`/`glDrawBuffer`/`glReadBuffer` 真实现；Vk 层 renderpass N 附件 + 附件 N 视图、pipeline `attachmentCount=附件数` 每附件独立 blend（draw_mask 未选型号清写掩码）、显式 clear 逐附件（仅 draw buffer 选中）、读回按 read_buf 挑附件。
   - **MSAA**：renderbuffer `samples>1` → `rasterizationSamples` + resolve 附件（单采样转储）、clear 写颜色与 resolve、读回 resolve 图；`ToVkSampleCount` 映射 1/2/4/8/16/32/64。
   - `tests/fbo_smoke.c` 29 行 ok（28 断言）：17 状态断言 + S5 FBO 纹理/RBO/blit + MRT 双附件读回与单 drawBuffer 门控 + MSAA 4x resolve 回读；八冒烟（contract/state/shader/draw/texture/fbo/3d/render3d）回归全过。
+- **M6 stage B 完成：swapchain / present（CAMetalLayer → Metal）**：
+  - `src/vk/swapchain.cpp`：`SetNativeLayer`（objc 校验 CAMetalLayer）→ 懒建 `VK_EXT_metal_surface` + `VK_KHR_swapchain`；`Present()` 工作线程/同步：acquire（image-available 信号量）→ 离屏 target blit 到 swapchain 图 → render-finished 信号量 → QueuePresent，fence 同步保单一多帧槽安全；OUT_OF_DATE 自重建；present 能力/队列校验；`mithril_has_swapchain` ABI 探针。
+  - `src/vk/dispatch.cpp`：Apple 下启用 surface/metal_surface/portability_enumeration 实例扩展（含 `VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR`）+ swapchain 设备扩展，加载 WSI 入口；macOS loader 候选加 `libvulkan.dylib`。
+  - `src/egl/exports.cpp`：window surface 透传 CAMetalLayer、`eglSwapBuffers`→`Present()`、`eglSwapInterval`→vsync、`eglQuerySurface`→present 尺寸。
+  - macOS CI：Homebrew `vulkan-loader`+`molten-vk`，`tests/swapchain_smoke.c` 用 objc 建真 CAMetalLayer 走全链路并断言 `mithril_has_swapchain`。
+  - Linux（无 Metal）：全部保守降级为 offscreen no-op，既有冒烟不受影响。
 
 ## 快速构建（Linux 开发循环）
 
@@ -47,6 +53,8 @@ gcc -o tests/3d_smoke tests/3d_smoke.c -ldl -lm
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/3d_smoke       # 3D 深度排序 + 透视投影（mat4 uniform 全链）
 gcc -o tests/render3d_smoke tests/render3d_smoke.c -ldl -lm
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/render3d_smoke # 俯视场景：地板网格 + 立方体 + 像素断言，导出 tests/render3d.ppm
+gcc -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl
+LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/swapchain_smoke # M6 swapchain 契约 + surface 查询（无 Metal 时离屏降级）
 python3 scripts/ppm_render.py tests/render3d.ppm tests/render3d.png # PPM→PNG
 ```
 
@@ -64,7 +72,7 @@ src/egl     EGL 层（44 符号，display/config/context/surface 生命周期）
 src/gl      分发电层（exports.cpp 生成 + 按域拆分的真实现 state/shader/vertex/draw）
 src/shader  glslang GLSL→SPIR-V + SPIRV-Cross 反射（M2 完成）
 src/state   GL 状态引擎（Context 结构、错误队列、capability 表）
-src/vk      Vulkan 后端（dlsym 加载器、离屏渲染、动态 UBO 池、读回；engine/dispatch/target/pipeline/fbo/draw 按域拆分）
+src/vk      Vulkan 后端（dlsym 加载器、离屏渲染、动态 UBO 池、读回；engine/dispatch/target/swapchain/pipeline/fbo/draw 按域拆分）
 scripts/    gen_gl_stubs.py（stub 生成器）、exported_symbols.txt
-tests/      contract_smoke.c / state_smoke.c / shader_smoke.c / draw_smoke.c / texture_smoke.c / fbo_smoke.c / 3d_smoke.c / render3d_smoke.c
+tests/      contract_smoke.c / state_smoke.c / shader_smoke.c / draw_smoke.c / texture_smoke.c / fbo_smoke.c / 3d_smoke.c / render3d_smoke.c / swapchain_smoke.c
 ```

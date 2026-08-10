@@ -39,6 +39,15 @@ typedef int   (*eglQuerySurface_fn)(void*, void*, int, int*);
 typedef void* (*eglCreateContext_fn)(void*, void*, void*, const int*);
 typedef int   (*eglBindAPI_fn)(int);
 
+#define CHECK(cond, fmt, ...)                                                       \
+    do {                                                                            \
+        if (!(cond)) {                                                              \
+            printf("FAIL: " fmt "\n", ##__VA_ARGS__);                              \
+            assert(cond);                                                           \
+        }                                                                           \
+        printf("ok  : " fmt "\n", ##__VA_ARGS__);                                   \
+    } while (0)
+
 #ifdef __APPLE__
 #include <objc/message.h>
 #include <objc/runtime.h>
@@ -61,7 +70,7 @@ int main(void) {
     const char* libpath = "./output/libmithril.so";
 #endif
     void* h = dlopen(libpath, RTLD_NOW | RTLD_GLOBAL);
-    if (!h) { printf("dlopen: %s\n", dlerror()); return 1; }
+    CHECK(h, "dlopen %s: %s", libpath, dlerror());
 
     eglGetDisplay_fn            eglGetDisplay            = dlsym(h, "eglGetDisplay");
     eglInitialize_fn            eglInitialize            = dlsym(h, "eglInitialize");
@@ -74,57 +83,57 @@ int main(void) {
     eglQuerySurface_fn          eglQuerySurface          = dlsym(h, "eglQuerySurface");
     eglBindAPI_fn               eglBindAPI               = dlsym(h, "eglBindAPI");
 
-    if (!eglGetDisplay || !eglInitialize || !eglChooseConfig || !eglCreateWindowSurface ||
-        !eglCreateContext || !eglMakeCurrent || !eglSwapBuffers || !eglSwapInterval ||
-        !eglQuerySurface || !eglBindAPI) {
-        printf("missing symbol\n");
-        return 1;
-    }
+    CHECK(eglGetDisplay && eglInitialize && eglChooseConfig && eglCreateWindowSurface &&
+          eglCreateContext && eglMakeCurrent && eglSwapBuffers && eglSwapInterval &&
+          eglQuerySurface && eglBindAPI, "all EGL symbols resolved");
 
-void* dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    assert(dpy);
+    void* dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    CHECK(dpy, "eglGetDisplay");
     int maj = 0, min = 0;
-    assert(eglInitialize(dpy, &maj, &min));
-    assert(eglBindAPI(EGL_OPENGL_API) == 1);
+    CHECK(eglInitialize(dpy, &maj, &min), "eglInitialize (%d.%d)", maj, min);
+    CHECK(eglBindAPI(EGL_OPENGL_API) == 1, "eglBindAPI(OPENGL_API)");
 
     const int attribs[] = {EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
                            EGL_DEPTH_SIZE, 24, EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
                            EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE};
     void* configs[1];
     int ncfg = 0;
-    assert(eglChooseConfig(dpy, attribs, configs, 1, &ncfg) == 1 && ncfg == 1);
+    CHECK(eglChooseConfig(dpy, attribs, configs, 1, &ncfg) == 1 && ncfg == 1,
+          "eglChooseConfig -> %d config", ncfg);
 
-// CAMetalLayer needs the objc runtime; this fake pointer exercises the EGL
-// contract path and confirms the non-layer input degrades safely to offscreen.
+// CAMetalLayer needs the objc runtime; elsewhere a fake pointer exercises the
+// EGL contract path and confirms the non-layer input degrades safely to offscreen.
 #ifdef __APPLE__
     void* win = MakeMetalLayer();
+    CHECK(win, "MakeMetalLayer");
 #else
     void* win = (void*)0x1;
 #endif
     void* surf = eglCreateWindowSurface(dpy, configs[0], win, 0);
-    assert(surf);
+    CHECK(surf, "eglCreateWindowSurface");
 
     const int ctx_attrs[] = {0x3098, 2, EGL_NONE};
     void* ctx = eglCreateContext(dpy, configs[0], 0, ctx_attrs);
-    assert(ctx);
-    assert(eglMakeCurrent(dpy, surf, surf, ctx) == 1);
+    CHECK(ctx, "eglCreateContext");
+    CHECK(eglMakeCurrent(dpy, surf, surf, ctx) == 1, "eglMakeCurrent");
 
     // Swap/interval must be accepted even with no live swapchain (offscreen).
-    assert(eglSwapInterval(dpy, 0) == 1);
-    assert(eglSwapBuffers(dpy, surf) == 1);
+    CHECK(eglSwapInterval(dpy, 0) == 1, "eglSwapInterval(0)");
+    CHECK(eglSwapBuffers(dpy, surf) == 1, "eglSwapBuffers");
 
 #ifdef __APPLE__
     // With a CAMetalLayer the swap must have driven a real swapchain; on
     // offscreen/non-Apple the (valid) fallback keeps mithril_has_swapchain 0.
     typedef int (*has_swapchain_fn)(void);
     has_swapchain_fn vkHasSwapchain = (has_swapchain_fn)dlsym(h, "mithril_has_swapchain");
-    if (vkHasSwapchain) assert(vkHasSwapchain() == 1);
+    CHECK(vkHasSwapchain && vkHasSwapchain() == 1,
+          "mithril_has_swapchain after swap");
 #endif
 
     int ws = 0, hs = 0;
-    assert(eglQuerySurface(dpy, surf, EGL_WIDTH, &ws) == 1);
-    assert(eglQuerySurface(dpy, surf, EGL_HEIGHT, &hs) == 1);
-    assert(ws > 0 && hs > 0);
+    CHECK(eglQuerySurface(dpy, surf, EGL_WIDTH, &ws) == 1, "eglQuerySurface(WIDTH)");
+    CHECK(eglQuerySurface(dpy, surf, EGL_HEIGHT, &hs) == 1, "eglQuerySurface(HEIGHT)");
+    CHECK(ws > 0 && hs > 0, "surface dims %dx%d", ws, hs);
 
     printf("SWAPCHAIN SMOKE ALL PASSED (%dx%d, EGL %d.%d)\n", ws, hs, maj, min);
     (void)EGL_SUCCESS;

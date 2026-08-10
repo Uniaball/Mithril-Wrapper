@@ -43,7 +43,7 @@ add_library(mithril SHARED
     src/util/log.cpp
     src/vk/dispatch.cpp
     src/vk/target.cpp
-    src/vk/target-new.cpp
+    src/vk/swapchain.cpp
     src/vk/pipeline.cpp
     src/vk/draw.cpp
     src/vk/engine.cpp

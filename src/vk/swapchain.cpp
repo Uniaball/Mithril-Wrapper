@@ -202,7 +202,9 @@ void SetVsync(bool enable) {
 }
 
 bool Present() {
-    if (!g.initialized) return false;
+    // Lazy engine boot: eglSwapBuffers is the first device-touching call when
+    // an app swaps without drawing (cleanup frames), so spin the engine up here.
+    if (!EnsureInit()) return false;
 #ifdef VK_USE_PLATFORM_METAL_EXT
     if (!EnsureSwapchain()) return false;
 
