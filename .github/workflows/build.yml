@@ -82,20 +82,16 @@ jobs:
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
 
-      - name: Install LunarG Vulkan SDK (Vulkan loader + MoltenVK ICD)
+      - name: Install Vulkan loader + MoltenVK (Homebrew)
         run: |
-          curl -fL -o /tmp/vulkan-sdk.dmg \
-            "https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg"
-          hdiutil attach /tmp/vulkan-sdk.dmg -nobrowse -mountpoint /Volumes/vulkansdk
-          ls /Volumes/vulkansdk
-          find /Volumes/vulkansdk -maxdepth 3 -name "MoltenVK_icd.json" -o -maxdepth 3 -name "libvulkan.dylib" | head
+          brew install vulkan-loader molten-vk
+          brew --prefix
+          ls "$(brew --prefix)/share/vulkan/icd.d/" 2>/dev/null || true
 
       - name: Run swapchain surface smoke against MoltenVK
         run: |
-          SDK=$(find /Volumes/vulkansdk -name "libvulkan.dylib" -print -quit | xargs dirname)
-          ICD=$(find /Volumes/vulkansdk -name "MoltenVK_icd.json" -print -quit)
-          export DYLD_LIBRARY_PATH="$SDK:$DYLD_LIBRARY_PATH"
-          export VK_ICD_FILENAMES="$ICD"
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/share/vulkan/icd.d/MoltenVK_icd.json"
           export VK_LOADER_DEBUG=error
           export LD_LIBRARY_PATH="$PWD/output"
           clang -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl

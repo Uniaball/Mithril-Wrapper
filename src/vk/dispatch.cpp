@@ -132,9 +132,13 @@ bool EnsureInit() {
     ici.pApplicationInfo = &app;
 #ifdef VK_USE_PLATFORM_METAL_EXT
     const char* kInstExts[] = {VK_KHR_SURFACE_EXTENSION_NAME,
-                               VK_EXT_METAL_SURFACE_EXTENSION_NAME};
-    ici.enabledExtensionCount = 2;
+                               VK_EXT_METAL_SURFACE_EXTENSION_NAME,
+                               VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME};
+    ici.enabledExtensionCount = 3;
     ici.ppEnabledExtensionNames = kInstExts;
+    // The loader only enumerates MoltenVK (a portability ICD) physical devices
+    // when this flag is set; VK_KHR_portability_enumeration pairs with it.
+    ici.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 #endif
     if (g.fn.CreateInstance(&ici, nullptr, &g.instance) != VK_SUCCESS) {
         ML_LOG_ERROR("vk: vkCreateInstance failed");
