@@ -74,8 +74,8 @@ GLboolean APIENTRY glIsEnabledi(GLenum cap, GLuint index) {
 
 // ---- noise cancellers -------------------------------------------------------
 
-void APIENTRY glFinish() { v::SubmitFlush(); }
-void APIENTRY glFlush() { v::SubmitFlush(); }
+void APIENTRY glFinish() { v::SubmitFlush(true); }
+void APIENTRY glFlush() { v::SubmitFlush(false); }
 
 // ---- viewport / scissor ----------------------------------------------------
 

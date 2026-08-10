@@ -158,6 +158,8 @@ bool EnsureInit() {
     ML_LOG_INFO("vk: physical device: %s", props.deviceName);
     if (props.limits.minUniformBufferOffsetAlignment > 16)
         g.ubo_align = props.limits.minUniformBufferOffsetAlignment;
+    else
+        g.ubo_align = 16;
 
     uint32_t n_fam = 0;
     g.fn.GetPhysicalDeviceQueueFamilyProperties(g.physical, &n_fam, nullptr);
@@ -193,13 +195,18 @@ bool EnsureInit() {
     LoadDeviceFunctions();
     g.fn.GetDeviceQueue(g.device, g.queue_family, 0, &g.queue);
 
-    // Dynamic UBO pool (host visible).
-    if (CreateHostBuffer(kUboPoolSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                         &g.ubo, &g.ubo_mem) != VK_SUCCESS ||
-        g.fn.MapMemory(g.device, g.ubo_mem, 0, VK_WHOLE_SIZE, 0,
-                       reinterpret_cast<void**>(&g.ubo_map)) != VK_SUCCESS) {
-        ML_LOG_ERROR("vk: dynamic UBO pool allocation failed");
-        return false;
+    // Dynamic UBO pool (host visible) per frame slot: an in-flight frame may
+    // still be reading its region while the next frame records into the other
+    // slot, so they must not share backing memory.
+    for (uint32_t i = 0; i < kMaxFramesInFlight; ++i) {
+        FrameSlot& fr = g.frames[i];
+        if (CreateHostBuffer(kUboPoolSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                             &fr.ubo, &fr.ubo_mem) != VK_SUCCESS ||
+            g.fn.MapMemory(g.device, fr.ubo_mem, 0, VK_WHOLE_SIZE, 0,
+                           reinterpret_cast<void**>(&fr.ubo_map)) != VK_SUCCESS) {
+            ML_LOG_ERROR("vk: dynamic UBO pool allocation failed");
+            return false;
+        }
     }
 
     // One dynamic UBO binding (0) + one combined image sampler per GL unit
@@ -235,10 +242,12 @@ bool EnsureInit() {
     dpci.maxSets = 256;
     dpci.poolSizeCount = dps.size();
     dpci.pPoolSizes = dps.data();
-    if (g.fn.CreateDescriptorPool(g.device, &dpci, nullptr, &g.desc_pool) !=
-        VK_SUCCESS) {
-        ML_LOG_ERROR("vk: CreateDescriptorPool failed");
-        return false;
+    for (uint32_t i = 0; i < kMaxFramesInFlight; ++i) {
+        if (g.fn.CreateDescriptorPool(g.device, &dpci, nullptr,
+                                      &g.frames[i].desc_pool) != VK_SUCCESS) {
+            ML_LOG_ERROR("vk: CreateDescriptorPool failed");
+            return false;
+        }
     }
 
     VkPipelineLayoutCreateInfo plci{};
@@ -257,17 +266,28 @@ bool EnsureInit() {
     cpci.queueFamilyIndex = g.queue_family;
     if (g.fn.CreateCommandPool(g.device, &cpci, nullptr, &g.pool) != VK_SUCCESS)
         return false;
+
+    // Auxiliary one-shot command buffer (texture uploads / blits / init) and
+    // one command buffer + fence per frame slot (the draw path).
     VkCommandBufferAllocateInfo cbai{};
     cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cbai.commandPool = g.pool;
     cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    VkFenceCreateInfo fci{};
+    fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     cbai.commandBufferCount = 1;
     if (g.fn.AllocateCommandBuffers(g.device, &cbai, &g.cmd) != VK_SUCCESS)
         return false;
-    VkFenceCreateInfo fci{};
-    fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     if (g.fn.CreateFence(g.device, &fci, nullptr, &g.fence) != VK_SUCCESS)
         return false;
+    for (uint32_t i = 0; i < kMaxFramesInFlight; ++i) {
+        if (g.fn.AllocateCommandBuffers(g.device, &cbai,
+                                        &g.frames[i].cmd) != VK_SUCCESS)
+            return false;
+        if (g.fn.CreateFence(g.device, &fci, nullptr,
+                             &g.frames[i].fence) != VK_SUCCESS)
+            return false;
+    }
 
     if (!CreateRenderPass()) {
         ML_LOG_ERROR("vk: CreateRenderPass failed");

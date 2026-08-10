@@ -119,13 +119,14 @@ void Draw(const DrawParams& params) {
 
     // Compose the UBO from the reflected members + current uniform values.
     VkDeviceSize range = prog.has_ubo ? prog.ubo_size : 16;
-    if (g.ubo_next + range > kUboPoolSize) {
+    if (g.frames[g.frame_index].ubo_next + range > kUboPoolSize) {
         ML_LOG_WARN("vk: dynamic UBO exhausted; flushing and resetting");
-        SubmitFlush();
+        SubmitFlush(false);
     }
-    op.ubo_offset = AlignUp(g.ubo_next, 16);
+    FrameSlot& frame = g.frames[g.frame_index];
+    op.ubo_offset = AlignUp(frame.ubo_next, 16);
     op.ubo_range = range;
-    g.ubo_next = op.ubo_offset + range;
+    frame.ubo_next = op.ubo_offset + range;
     if (prog.has_ubo) {
         std::vector<uint8_t> bytes((size_t)prog.ubo_size, 0);
         for (const auto& m : prog.members) {
@@ -134,15 +135,15 @@ void Draw(const DrawParams& params) {
             size_t n = std::min<size_t>(m.size, it->second.size() * sizeof(float));
             std::memcpy(bytes.data() + m.offset, it->second.data(), n);
         }
-        std::memcpy(g.ubo_map + op.ubo_offset, bytes.data(), bytes.size());
+        std::memcpy(frame.ubo_map + op.ubo_offset, bytes.data(), bytes.size());
     } else {
-        std::memset(g.ubo_map + op.ubo_offset, 0, 16);
+        std::memset(frame.ubo_map + op.ubo_offset, 0, 16);
     }
 
     // Descriptor for this draw.
     VkDescriptorSetAllocateInfo dsa{};
     dsa.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsa.descriptorPool = g.desc_pool;
+    dsa.descriptorPool = frame.desc_pool;
     dsa.descriptorSetCount = 1;
     dsa.pSetLayouts = &g.set_layout;
     if (g.fn.AllocateDescriptorSets(g.device, &dsa, &op.desc_set) !=
@@ -161,7 +162,7 @@ void Draw(const DrawParams& params) {
         return;
     }
     VkDescriptorBufferInfo dbi{};
-    dbi.buffer = g.ubo;
+    dbi.buffer = frame.ubo;
     dbi.range = op.ubo_range;
     std::vector<VkWriteDescriptorSet> writes;
     VkWriteDescriptorSet w{};
@@ -196,12 +197,68 @@ void Draw(const DrawParams& params) {
     g.fn.UpdateDescriptorSets(g.device, (uint32_t)writes.size(), writes.data(),
                               0, nullptr);
 
-    g.frame_draws.push_back(std::move(op));
+    frame.frame_draws.push_back(std::move(op));
     g.frame_dirty = true;
 }
 
-void SubmitFlush() {
-    if (!g.initialized || !g.frame_dirty) return;
+// Free every per-draw staging buffer an op recorded. The buffers were only
+// alive for that op's draw; after the frame's fence signals they can go.
+static void DestroyOpBuffers(DrawOp& op) {
+    g.fn.DestroyBuffer(g.device, op.vertex_buffer, nullptr);
+    g.fn.FreeMemory(g.device, op.vertex_mem, nullptr);
+    if (op.instance_buffer) {
+        g.fn.DestroyBuffer(g.device, op.instance_buffer, nullptr);
+        g.fn.FreeMemory(g.device, op.instance_mem, nullptr);
+    }
+    if (op.index_buffer) {
+        g.fn.DestroyBuffer(g.device, op.index_buffer, nullptr);
+        g.fn.FreeMemory(g.device, op.index_mem, nullptr);
+    }
+    op.vertex_buffer = VK_NULL_HANDLE;
+    op.instance_buffer = VK_NULL_HANDLE;
+    op.index_buffer = VK_NULL_HANDLE;
+    op.vertex_mem = VK_NULL_HANDLE;
+    op.instance_mem = VK_NULL_HANDLE;
+    op.index_mem = VK_NULL_HANDLE;
+}
+
+// Recycle one frame slot after the GPU finished with it: wait its fence,
+// free the recorded staging buffers, reset the descriptor pool + UBO cursor.
+static void RetireFrame(uint32_t idx) {
+    FrameSlot& fr = g.frames[idx];
+    if (!fr.in_flight) return;
+    g.fn.WaitForFences(g.device, 1, &fr.fence, VK_TRUE, UINT64_MAX);
+    g.fn.ResetFences(g.device, 1, &fr.fence);
+    for (auto& op : fr.frame_draws) DestroyOpBuffers(op);
+    fr.frame_draws.clear();
+    g.fn.ResetDescriptorPool(g.device, fr.desc_pool, 0);
+    fr.ubo_next = 0;
+    fr.in_flight = false;
+}
+
+// Block until every submitted-but-not-yet-recycled frame slot is done. Used
+// before resource mutation (texture uploads / FBO changes) and before
+// readback so the GPU can never reference memory the host is about to free.
+void RetireAllInflight() {
+    if (!g.initialized) return;
+    for (uint32_t i = 0; i < kMaxFramesInFlight; ++i) RetireFrame(i);
+}
+
+void SubmitFlush(bool wait) {
+    if (!g.initialized) return;
+
+    // Nothing to submit this call: if the caller wants completion semantics
+    // (glFinish) make sure any in-flight frame from a previous flush is done.
+    if (!g.frame_dirty) {
+        if (wait) RetireAllInflight();
+        return;
+    }
+
+    FrameSlot& frame = g.frames[g.frame_index];
+    uint32_t fidx = g.frame_index;
+    // The slot we're about to reuse was submitted two frames ago; the GPU
+    // must be fully done with it before we recycle its UBO/descriptor pool.
+    RetireFrame(fidx);
 
     // Target resolution: default framebuffer vs bound FBO.
     uint32_t pw = g.width, ph = g.height;
@@ -240,8 +297,8 @@ void SubmitFlush() {
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    g.fn.ResetCommandBuffer(g.cmd, 0);
-    g.fn.BeginCommandBuffer(g.cmd, &bi);
+    g.fn.ResetCommandBuffer(frame.cmd, 0);
+    g.fn.BeginCommandBuffer(frame.cmd, &bi);
 
     // Optional explicit clear of the current target. MRT: one clear per
     // colour attachment (only those selected by the draw buffers).
@@ -255,9 +312,9 @@ void SubmitFlush() {
             c.float32[3] = g.clear_a;
             auto clear_img = [&](VkImage img, VkImageLayout lay) {
                 if (img == VK_NULL_HANDLE) return;
-                TransitionLayout(g.cmd, img, lay,
+                TransitionLayout(frame.cmd, img, lay,
                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-                g.fn.CmdClearColorImage(g.cmd, img,
+                g.fn.CmdClearColorImage(frame.cmd, img,
                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                         &c, 1, &color_range);
             };
@@ -281,7 +338,7 @@ void SubmitFlush() {
         if (g.clear_mask & GL_STENCIL_BUFFER_BIT)
             aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
         if (*depth_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-            TransitionLayoutAspect(g.cmd, depth_img, {aspect, 0, 1, 0, 1},
+            TransitionLayoutAspect(frame.cmd, depth_img, {aspect, 0, 1, 0, 1},
                                    *depth_layout,
                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
             *depth_layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -290,12 +347,12 @@ void SubmitFlush() {
         c.depth = (float)g.clear_depth;
         c.stencil = (uint32_t)g.clear_stencil;
         VkImageSubresourceRange depth_range{aspect, 0, 1, 0, 1};
-        g.fn.CmdClearDepthStencilImage(g.cmd, depth_img,
+        g.fn.CmdClearDepthStencilImage(frame.cmd, depth_img,
                                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                        &c, 1, &depth_range);
     }
     if (*color_layout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
-        TransitionLayout(g.cmd, color_img, *color_layout,
+        TransitionLayout(frame.cmd, color_img, *color_layout,
                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         *color_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
@@ -306,12 +363,12 @@ void SubmitFlush() {
             fbo->resolve_view[i] &&
             FboResolveImage(*fbo, (int)i) != VK_NULL_HANDLE) {
             auto rim = FboResolveImage(*fbo, (int)i);
-            TransitionLayout(g.cmd, rim, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            TransitionLayout(frame.cmd, rim, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         }
     if (has_depth &&
         *depth_layout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
-        TransitionLayoutAspect(g.cmd, depth_img,
+        TransitionLayoutAspect(frame.cmd, depth_img,
                                {VK_IMAGE_ASPECT_DEPTH_BIT |
                                     VK_IMAGE_ASPECT_STENCIL_BIT,
                                 0, 1, 0, 1},
@@ -320,13 +377,13 @@ void SubmitFlush() {
         *depth_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     }
 
-    if (!g.frame_draws.empty()) {
+    if (!frame.frame_draws.empty()) {
         VkRenderPassBeginInfo rbi{};
         rbi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rbi.renderPass = rp;
         rbi.framebuffer = fb_handle;
         rbi.renderArea = {0, 0, pw, ph};
-        g.fn.CmdBeginRenderPass(g.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
+        g.fn.CmdBeginRenderPass(frame.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
 
         VkViewport vp{};
         vp.x = g.vp_x;
@@ -335,15 +392,15 @@ void SubmitFlush() {
         vp.height = std::min<float>(g.vp_h, ph);
         vp.minDepth = 0.f;
         vp.maxDepth = 1.f;
-        g.fn.CmdSetViewport(g.cmd, 0, 1, &vp);
+        g.fn.CmdSetViewport(frame.cmd, 0, 1, &vp);
 
         // Per-draw scissor: GL_SCISSOR_TEST gates a per-draw rectangle
         // (dynamic state), otherwise the full target.
-        for (const auto& op : g.frame_draws) {
+        for (const auto& op : frame.frame_draws) {
             VkPipeline pipe =
                 GetOrCreatePipeline(g_programs.at(op.program), op);
             if (pipe == VK_NULL_HANDLE) continue;
-            g.fn.CmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+            g.fn.CmdBindPipeline(frame.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
 
             // Dynamic scissor for this draw (GL_SCISSOR_TEST).
             VkRect2D sc;
@@ -364,29 +421,29 @@ void SubmitFlush() {
                 sc.offset = {0, 0};
                 sc.extent = {pw, ph};
             }
-            g.fn.CmdSetScissor(g.cmd, 0, 1, &sc);
+            g.fn.CmdSetScissor(frame.cmd, 0, 1, &sc);
 
             const VkBuffer binds[2] = {op.vertex_buffer, op.instance_buffer};
             const VkDeviceSize zeros[2] = {0, 0};
             uint32_t nb = op.instance_buffer ? 2 : 1;
-            g.fn.CmdBindVertexBuffers(g.cmd, 0, nb, binds, zeros);
+            g.fn.CmdBindVertexBuffers(frame.cmd, 0, nb, binds, zeros);
 
             if (op.index_count) {
-                g.fn.CmdBindIndexBuffer(g.cmd, op.index_buffer, 0,
+                g.fn.CmdBindIndexBuffer(frame.cmd, op.index_buffer, 0,
                                         VK_INDEX_TYPE_UINT32);
             }
             uint32_t dyn = (uint32_t)op.ubo_offset;
-            g.fn.CmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            g.fn.CmdBindDescriptorSets(frame.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                        g.pipeline_layout, 0, 1, &op.desc_set,
                                        1, &dyn);
             if (op.index_count) {
-                g.fn.CmdDrawIndexed(g.cmd, op.index_count, op.instance_count,
+                g.fn.CmdDrawIndexed(frame.cmd, op.index_count, op.instance_count,
                                     0, 0, 0);
             } else {
-                g.fn.CmdDraw(g.cmd, op.vertex_count, op.instance_count, 0, 0);
+                g.fn.CmdDraw(frame.cmd, op.vertex_count, op.instance_count, 0, 0);
             }
         }
-        g.fn.CmdEndRenderPass(g.cmd);
+        g.fn.CmdEndRenderPass(frame.cmd);
     }
 
     // Copy the finished read-buffer colour image to the readback buffer.
@@ -427,7 +484,7 @@ void SubmitFlush() {
 
     if (read_img != VK_NULL_HANDLE &&
         read_layout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
-        TransitionLayout(g.cmd, read_img, read_layout,
+        TransitionLayout(frame.cmd, read_img, read_layout,
                          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         read_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     }
@@ -456,7 +513,7 @@ void SubmitFlush() {
         VkBufferImageCopy bic{};
         bic.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         bic.imageExtent = {rw, rh, 1};
-        g.fn.CmdCopyImageToBuffer(g.cmd, read_img,
+        g.fn.CmdCopyImageToBuffer(frame.cmd, read_img,
                                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g.readback,
                                   1, &bic);
     }
@@ -466,48 +523,40 @@ void SubmitFlush() {
     // sampled next, so leave them shader-read-optimal.
     if (read_img != VK_NULL_HANDLE) {
         if (read_fbo && !read_fbo->color_msaa[ridx]) {
-            TransitionLayout(g.cmd, read_img, read_layout,
+            TransitionLayout(frame.cmd, read_img, read_layout,
                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             read_fbo->color_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         } else if (!read_fbo && read_layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
-            TransitionLayout(g.cmd, read_img, read_layout,
+            TransitionLayout(frame.cmd, read_img, read_layout,
                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             g.target_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         }
     }
 
-    g.fn.EndCommandBuffer(g.cmd);
+    g.fn.EndCommandBuffer(frame.cmd);
 
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
-    si.pCommandBuffers = &g.cmd;
-    if (g.fn.QueueSubmit(g.queue, 1, &si, g.fence) != VK_SUCCESS) {
+    si.pCommandBuffers = &frame.cmd;
+    if (g.fn.QueueSubmit(g.queue, 1, &si, frame.fence) != VK_SUCCESS) {
         ML_LOG_ERROR("vk: QueueSubmit failed");
         return;
     }
-    g.fn.WaitForFences(g.device, 1, &g.fence, VK_TRUE, UINT64_MAX);
-    g.fn.ResetFences(g.device, 1, &g.fence);
 
-    for (auto& op : g.frame_draws) {
-        g.fn.DestroyBuffer(g.device, op.vertex_buffer, nullptr);
-        g.fn.FreeMemory(g.device, op.vertex_mem, nullptr);
-        if (op.instance_buffer) {
-            g.fn.DestroyBuffer(g.device, op.instance_buffer, nullptr);
-            g.fn.FreeMemory(g.device, op.instance_mem, nullptr);
-        }
-        if (op.index_buffer) {
-            g.fn.DestroyBuffer(g.device, op.index_buffer, nullptr);
-            g.fn.FreeMemory(g.device, op.index_mem, nullptr);
-        }
-    }
-    g.fn.ResetDescriptorPool(g.device, g.desc_pool, 0);
-    g.ubo_next = 0;
+    // Advance to the other slot so the next frame can be recorded while this
+    // one executes. The slot we leave is retired on its next reuse.
+    g.frame_index = (g.frame_index + 1) % kMaxFramesInFlight;
     g.pending_clear = false;
-    g.frame_draws.clear();
     g.frame_dirty = false;
-    ML_LOG_DEBUG("vk: frame submitted to %s target (%ux%u)",
-                 fbo ? "FBO" : "default", pw, ph);
+    frame.in_flight = true;
+
+    // glFinish semantics: block until this frame (and any previous one)
+    // completed and the readback is populated.
+    if (wait) RetireAllInflight();
+    ML_LOG_DEBUG("vk: frame submitted to %s target (%ux%u)%s",
+                 fbo ? "FBO" : "default", pw, ph,
+                 wait ? " (sync)" : " (async)");
 }
 
 void RefreshReadback() {
@@ -519,6 +568,10 @@ void RefreshReadback() {
 
 void ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, void* out) {
     if (!g.initialized || !g.readback_map) return;
+    // The readback must reflect the latest submitted frame. Force the pending
+    // frame through synchronously so the buffer below is guaranteed fresh.
+    if (g.frame_dirty) SubmitFlush(true);
+    RetireAllInflight();
     x = std::max<GLint>(0, x);
     y = std::max<GLint>(0, y);
     width = std::min<GLsizei>(width, (GLsizei)g.read_w - x);

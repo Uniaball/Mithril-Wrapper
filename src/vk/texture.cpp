@@ -166,6 +166,9 @@ void DestroyTexObj(TexObj& t) {
 void UploadTexture(uint64_t gl_id, const TexUpload& img,
                    const TexSamplerInfo& sampler) {
     if (!g.initialized || img.mip.empty()) return;
+    // A frame flush may still be sampling the resident image we're about to
+    // replace; wait for every in-flight slot before tearing it down.
+    RetireAllInflight();
 
     // Replace any previous resident image for this id.
     auto it = g.textures.find(gl_id);
@@ -294,6 +297,8 @@ void CreateDummyTexture() {
 }
 
 void DestroyResidentTexture(uint64_t gl_id) {
+    if (!g.initialized) return;
+    RetireAllInflight();
     auto it = g.textures.find(gl_id);
     if (it != g.textures.end()) {
         DestroyTexObj(it->second);

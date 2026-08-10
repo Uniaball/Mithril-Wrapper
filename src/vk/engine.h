@@ -172,9 +172,17 @@ void DestroyProgram(uint64_t program);
 // Record a draw into the pending frame (submitted by SubmitFlush).
 void Draw(const DrawParams& params);
 
-// Execute the pending frame (clear + draws). Blocks until the GPU is idle,
-// then copies the frame into the readback buffer for ReadPixels.
-void SubmitFlush();
+// Execute the pending frame (clear + draws). With `wait` (glFinish) the host
+// blocks until the GPU finishes and the readback is ready; without it
+// (glFlush) the frame is kicked and the engine advances to the other frame
+// slot so recording can continue while the GPU is still busy.
+void SubmitFlush(bool wait);
+
+// Block until every frame slot the GPU may still be working on has finished,
+// recycling their descriptors/UBO/staging. Called before resource mutation
+// (texture uploads, FBO changes) so in-flight frames never reference freed
+// memory, and before readback so results reflect the latest submission.
+void RetireAllInflight();
 
 // Copy a finished frame region (RGBA8, GL-style bottom-up origin) into `out`.
 void ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, void* out);

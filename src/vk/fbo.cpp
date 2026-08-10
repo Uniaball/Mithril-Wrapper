@@ -233,6 +233,7 @@ VkRenderPass GetOrCreateFboPass(const std::string& sig, size_t n_color,
 void CreateRenderbuffer(uint64_t rbo_id, GLenum internalformat,
                         uint32_t width, uint32_t height, uint32_t samples) {
     if (!g.initialized) return;
+    RetireAllInflight();
     RbObj r;
     r.format = MapRbFormat(internalformat);
     r.samples = std::max(1u, samples);
@@ -245,6 +246,7 @@ void CreateRenderbuffer(uint64_t rbo_id, GLenum internalformat,
 }
 
 void DestroyRenderbuffer(uint64_t rbo_id) {
+    RetireAllInflight();
     auto it = g.renderbuffers.find(rbo_id);
     if (it != g.renderbuffers.end()) {
         DestroyRbo(it->second);
@@ -254,6 +256,7 @@ void DestroyRenderbuffer(uint64_t rbo_id) {
 
 void SetFramebuffer(uint64_t fbo_id, const FboSpec& spec) {
     if (!g.initialized) return;
+    RetireAllInflight();
     FboObj& f = g.framebuffers[fbo_id];
     f.colors.clear();
     f.color_view.clear();
@@ -275,6 +278,7 @@ void SetFramebuffer(uint64_t fbo_id, const FboSpec& spec) {
 }
 
 void DestroyFramebuffer(uint64_t fbo_id) {
+    RetireAllInflight();
     auto it = g.framebuffers.find(fbo_id);
     if (it == g.framebuffers.end()) return;
     FboObj& f = it->second;

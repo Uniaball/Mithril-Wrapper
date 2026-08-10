@@ -470,7 +470,7 @@ void APIENTRY glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height,
     }
     if (!pixels) { PUSH_ERROR(GL_INVALID_OPERATION); return; }
     if (!v::EnsureInit()) { PUSH_ERROR(GL_INVALID_OPERATION); return; }
-    v::SubmitFlush();
+    v::SubmitFlush(true);
     v::ReadPixels(x, y, width, height, pixels);
 }
 

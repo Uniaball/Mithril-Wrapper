@@ -239,6 +239,28 @@ struct DrawOp {
     uint32_t draw_mask = 1;    // bit i set => colour attachment i receives the draw
 };
 
+// M6 stage A: double-buffered frame submission (two slots in flight while
+// the host keeps recording into the next). Each slot owns everything the GPU
+// may still be consuming after an async flush: the command buffer, its
+// descriptor pool, its dynamic UBO region and the per-draw staging buffers.
+// A slot is retired (fence wait + descriptor/UBO recycle + staging free) when
+// it is reused two submissions later or when a synchronous read needs the
+// result. `g.cmd`/`g.fence` remain a separate auxiliary one-shot path for
+// texture uploads / blits, which are always synchronous.
+constexpr uint32_t kMaxFramesInFlight = 2;
+
+struct FrameSlot {
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    VkDescriptorPool desc_pool = VK_NULL_HANDLE;
+    VkBuffer ubo = VK_NULL_HANDLE;
+    VkDeviceMemory ubo_mem = VK_NULL_HANDLE;
+    uint8_t* ubo_map = nullptr;
+    VkDeviceSize ubo_next = 0;
+    bool in_flight = false;          // submitted async and not yet retired
+    std::vector<DrawOp> frame_draws; // recorded draws; staging freed on retire
+};
+
 struct Engine {
     void* loader = nullptr;
     FnTable fn{};
@@ -264,8 +286,13 @@ struct Engine {
 
     VkRenderPass renderpass = VK_NULL_HANDLE;
     VkCommandPool pool = VK_NULL_HANDLE;
+    // Auxiliary one-shot command buffer + fence (texture uploads, blits,
+    // initial layout transitions). Always submitted and waited synchronously.
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
+    // M6 stage A: double-buffered frame slots (draw path).
+    FrameSlot frames[kMaxFramesInFlight];
+    uint32_t frame_index = 0;   // slot the next SubmitFlush records/submits
 
     // S5: FBO/renderbuffer tables + current draw/read framebuffer bindings.
     std::unordered_map<uint64_t, RbObj> renderbuffers;
@@ -280,17 +307,15 @@ struct Engine {
     std::unordered_map<std::string, VkRenderPass> fbo_passes;
 
     VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
-    VkDescriptorPool desc_pool = VK_NULL_HANDLE;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
 
     // M4 textures: gl texture id -> resident GPU image.
     std::unordered_map<uint64_t, TexObj> textures;
     TexObj dummy_tex;             // 1x1 white fallback for unbound units
 
-    VkBuffer ubo = VK_NULL_HANDLE;
-    VkDeviceMemory ubo_mem = VK_NULL_HANDLE;
-    uint8_t* ubo_map = nullptr;
-    VkDeviceSize ubo_next = 0;
+    // Dynamic UBO via vkCmdBindDescriptorSets dynamic offsets; the backing
+    // buffer is per-frame-slot since an in-flight frame may still be reading
+    // its region. `ubo_align` is the dynamic-binding alignment.
     VkDeviceSize ubo_align = 256;
 
     VkBuffer readback = VK_NULL_HANDLE;
@@ -307,7 +332,6 @@ struct Engine {
     int clear_stencil = 0;
     float vp_x = 0, vp_y = 0, vp_w = 512, vp_h = 512;
     float sc_x = 0, sc_y = 0, sc_w = 512, sc_h = 512;
-    std::vector<DrawOp> frame_draws;
 };
 
 // Engine + program/pipeline caches (storage lives in engine.cpp).
