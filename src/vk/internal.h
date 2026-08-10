@@ -42,9 +42,19 @@ struct FnTable {
     ML_FN(DestroyDevice);
     ML_FN(EnumerateDeviceExtensionProperties);
     ML_FN(GetDeviceProcAddr);
+    ML_FN(DestroySurfaceKHR);
+    ML_FN(GetPhysicalDeviceSurfaceCapabilitiesKHR);
+    ML_FN(GetPhysicalDeviceSurfaceFormatsKHR);
+    ML_FN(GetPhysicalDeviceSurfacePresentModesKHR);
+    ML_FN(GetPhysicalDeviceSurfaceSupportKHR);
+#ifdef VK_USE_PLATFORM_METAL_EXT
+    ML_FN(CreateMetalSurfaceEXT);
+#endif
     // device-level
     ML_FN(GetDeviceQueue);
     ML_FN(DeviceWaitIdle);
+    ML_FN(CreateSemaphore);
+    ML_FN(DestroySemaphore);
     ML_FN(CreateCommandPool);
     ML_FN(DestroyCommandPool);
     ML_FN(AllocateCommandBuffers);
@@ -91,6 +101,11 @@ struct FnTable {
     ML_FN(DestroyPipeline);
     ML_FN(CreateSampler);
     ML_FN(DestroySampler);
+    ML_FN(CreateSwapchainKHR);
+    ML_FN(DestroySwapchainKHR);
+    ML_FN(GetSwapchainImagesKHR);
+    ML_FN(AcquireNextImageKHR);
+    ML_FN(QueuePresentKHR);
     ML_FN(CmdCopyBufferToImage);
     ML_FN(CmdBindPipeline);
     ML_FN(CmdBindVertexBuffers);
@@ -261,6 +276,20 @@ struct FrameSlot {
     std::vector<DrawOp> frame_draws; // recorded draws; staging freed on retire
 };
 
+struct Swapchain {
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    VkSwapchainKHR handle = VK_NULL_HANDLE;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    VkColorSpaceKHR color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    VkExtent2D extent{};
+    std::vector<VkImage> images;
+    std::vector<VkImageView> views;
+    VkSemaphore acquire_sem = VK_NULL_HANDLE;
+    std::vector<VkSemaphore> render_finished;
+    uint32_t acquire_index = 0;
+    bool acquire_valid = false;
+};
+
 struct Engine {
     void* loader = nullptr;
     FnTable fn{};
@@ -286,6 +315,9 @@ struct Engine {
 
     VkRenderPass renderpass = VK_NULL_HANDLE;
     VkCommandPool pool = VK_NULL_HANDLE;
+    void* native_layer = nullptr;
+    Swapchain swap;
+    bool vsync = true;
     // Auxiliary one-shot command buffer + fence (texture uploads, blits,
     // initial layout transitions). Always submitted and waited synchronously.
     VkCommandBuffer cmd = VK_NULL_HANDLE;

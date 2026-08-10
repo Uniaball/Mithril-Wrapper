@@ -43,6 +43,7 @@ add_library(mithril SHARED
     src/util/log.cpp
     src/vk/dispatch.cpp
     src/vk/target.cpp
+    src/vk/target-new.cpp
     src/vk/pipeline.cpp
     src/vk/draw.cpp
     src/vk/engine.cpp
@@ -72,7 +73,7 @@ set_target_properties(mithril PROPERTIES
 if(UNIX AND NOT APPLE)
     # Linux: plain shared library for local dev loop.
 elseif(APPLE AND MITHRIL_IOS)
-    target_compile_definitions(mithril PUBLIC MITHRIL_IOS=1)
+    target_compile_definitions(mithril PUBLIC MITHRIL_IOS=1 VK_USE_PLATFORM_METAL_EXT=1)
     target_link_libraries(mithril PUBLIC
         "-framework CoreGraphics"
         "-framework Foundation"
@@ -83,6 +84,8 @@ elseif(APPLE AND MITHRIL_IOS)
     endif()
 elseif(APPLE)
     # macOS: export whitelist mirroring MobileGL's ExportedSymbols.txt pattern.
+    target_compile_definitions(mithril PUBLIC VK_USE_PLATFORM_METAL_EXT=1)
+    target_link_libraries(mithril PUBLIC objc)
     target_link_options(mithril PRIVATE
         "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/scripts/exported_symbols.txt")
     set_property(TARGET mithril APPEND PROPERTY

@@ -188,6 +188,26 @@ void RetireAllInflight();
 void ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, void* out);
 
 // ---------------------------------------------------------------------------
+// M6 stage B: swapchain / present (CAMetalLayer, Apple builds).
+// ---------------------------------------------------------------------------
+
+// Hand the native window (a CAMetalLayer on Apple) supplied through
+// eglCreateWindowSurface to the engine. Non-layers and non-Apple builds stay
+// offscreen. Lazy: the swapchain is created on the first Present().
+void SetNativeLayer(void* layer);
+
+// vsync on/off (eglSwapInterval >0/==0) for the next swapchain / present mode.
+void SetVsync(bool enable);
+
+// Present the last offscreen frame: acquire a swapchain image, blit the
+// finished frame into it, queue the present. False when no swapchain (Linux).
+bool Present();
+
+// Presented surface size (offscreen target size when no swapchain).
+uint32_t PresentWidth();
+uint32_t PresentHeight();
+
+// ---------------------------------------------------------------------------
 // S5: FBO / renderbuffer support.
 // ---------------------------------------------------------------------------
 

@@ -9,6 +9,9 @@
 
 #include <egl/internal.h>
 #include <util/log.h>
+#include <vk/engine.h>
+
+namespace vk = mithril::vk;
 
 using namespace mithril::egl;
 
@@ -211,6 +214,7 @@ EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config,
     globals().surface.native_window = (void*)win;
     globals().surface.is_window = true;
     globals().surface.swap_interval = 1;
+    vk::SetNativeLayer((void*)win);
     ML_LOG_DEBUG("eglCreateWindowSurface(win=%p)", (void*)win);
     SetError(EGL_SUCCESS);
     return reinterpret_cast<EGLSurface>(&globals().surface);
@@ -222,6 +226,7 @@ EGLSurface eglCreatePlatformWindowSurface(EGLDisplay dpy, EGLConfig config, void
     globals().surface.native_window = native_window;
     globals().surface.is_window = true;
     globals().surface.swap_interval = 1;
+    vk::SetNativeLayer(native_window);
     SetError(EGL_SUCCESS);
     return reinterpret_cast<EGLSurface>(&globals().surface);
 }
@@ -244,8 +249,8 @@ EGLBoolean eglDestroySurface(EGLDisplay dpy, EGLSurface surface) {
 
 EGLBoolean eglQuerySurface(EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint* value) {
     switch (attribute) {
-        case EGL_WIDTH: *value = 0; break;
-        case EGL_HEIGHT: *value = 0; break;
+        case EGL_WIDTH: *value = (EGLint)vk::PresentWidth(); break;
+        case EGL_HEIGHT: *value = (EGLint)vk::PresentHeight(); break;
         default:
             SetError(EGL_BAD_ATTRIBUTE);
             return EGL_FALSE;
@@ -261,11 +266,16 @@ EGLBoolean eglSurfaceAttrib(EGLDisplay dpy, EGLSurface surface, EGLint attribute
 
 EGLBoolean eglSwapInterval(EGLDisplay dpy, EGLint interval) {
     globals().surface.swap_interval = interval;
+    vk::SetVsync(interval > 0);
     SetError(EGL_SUCCESS);
     return EGL_TRUE;
 }
 
 EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
+    (void)dpy;
+    (void)surface;
+    // iOS: present the completed offscreen frame; Linux: no swapchain, no-op.
+    vk::Present();
     SetError(EGL_SUCCESS);
     return EGL_TRUE;
 }

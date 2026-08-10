@@ -67,6 +67,42 @@ jobs:
           path: ${{ steps.locate.outputs.path }}
           if-no-files-found: error
 
+  # ---- macOS: boot the engine under MoltenVK (Metal swapchain path) -------
+  test-macos-metal:
+    runs-on: macos-14
+    needs: build-macos
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure (macOS arm64 Release)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Install LunarG Vulkan SDK (Vulkan loader + MoltenVK ICD)
+        run: |
+          curl -fL -o /tmp/vulkan-sdk.dmg \
+            "https://sdk.lunarg.com/sdk/download/latest/mac/vulkan-sdk.dmg"
+          hdiutil attach /tmp/vulkan-sdk.dmg -nobrowse -mountpoint /Volumes/vulkansdk
+          ls /Volumes/vulkansdk
+          find /Volumes/vulkansdk -maxdepth 3 -name "MoltenVK_icd.json" -o -maxdepth 3 -name "libvulkan.dylib" | head
+
+      - name: Run swapchain surface smoke against MoltenVK
+        run: |
+          SDK=$(find /Volumes/vulkansdk -name "libvulkan.dylib" -print -quit | xargs dirname)
+          ICD=$(find /Volumes/vulkansdk -name "MoltenVK_icd.json" -print -quit)
+          export DYLD_LIBRARY_PATH="$SDK:$DYLD_LIBRARY_PATH"
+          export VK_ICD_FILENAMES="$ICD"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          clang -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl
+          output=$(./tests/swapchain_smoke)
+          echo "$output"
+          echo "$output" | grep -q "SWAPCHAIN SMOKE ALL PASSED"
+
   # ---- Linux: run the contract + state machine smoke tests ----------------
   test-linux:
     runs-on: ubuntu-latest
@@ -98,6 +134,7 @@ jobs:
           gcc -o tests/3d_smoke      tests/3d_smoke.c      -ldl -lm
           gcc -o tests/render3d_smoke tests/render3d_smoke.c -ldl -lm
           gcc -o tests/multiframe_smoke tests/multiframe_smoke.c -ldl -lm
+          gcc -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl
 
       - name: Run EGL contract smoke
         run: |
@@ -152,6 +189,12 @@ jobs:
           output=$(./tests/multiframe_smoke)
           echo "$output"
           echo "$output" | grep -q "MULTIFRAME SMOKE ALL PASSED"
+
+      - name: Run swapchain surface smoke (offscreen on lavapipe)
+        run: |
+          output=$(./tests/swapchain_smoke)
+          echo "$output"
+          echo "$output" | grep -q "SWAPCHAIN SMOKE ALL PASSED"
 
       - name: Install Pillow for image export
         run: |

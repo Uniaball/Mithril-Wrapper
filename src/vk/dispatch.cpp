@@ -18,6 +18,8 @@ void LoadDeviceFunctions() {
         g.fn.GetDeviceProcAddr(g.device, "vk" #NAME))
     LOAD_DEV(GetDeviceQueue);
     LOAD_DEV(DeviceWaitIdle);
+    LOAD_DEV(CreateSemaphore);
+    LOAD_DEV(DestroySemaphore);
     LOAD_DEV(CreateCommandPool);
     LOAD_DEV(DestroyCommandPool);
     LOAD_DEV(AllocateCommandBuffers);
@@ -80,6 +82,11 @@ void LoadDeviceFunctions() {
     LOAD_DEV(CmdResolveImage);
     LOAD_DEV(CreateSampler);
     LOAD_DEV(DestroySampler);
+    LOAD_DEV(CreateSwapchainKHR);
+    LOAD_DEV(DestroySwapchainKHR);
+    LOAD_DEV(GetSwapchainImagesKHR);
+    LOAD_DEV(AcquireNextImageKHR);
+    LOAD_DEV(QueuePresentKHR);
     LOAD_DEV(CmdSetViewport);
     LOAD_DEV(CmdSetScissor);
 #undef LOAD_DEV
@@ -89,7 +96,8 @@ bool EnsureInit() {
     if (g.initialized) return true;
 
     static const char* kLoaders[] = {
-        "libvulkan.so.1", "libvulkan.so", "libMoltenVK.dylib",
+        "libvulkan.so.1", "libvulkan.so", "libvulkan.dylib", "libvulkan.1.dylib",
+        "libMoltenVK.dylib",
     };
     for (const char* name : kLoaders) {
         g.loader = dlopen(name, RTLD_NOW | RTLD_LOCAL);
@@ -122,6 +130,12 @@ bool EnsureInit() {
     VkInstanceCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ici.pApplicationInfo = &app;
+#ifdef VK_USE_PLATFORM_METAL_EXT
+    const char* kInstExts[] = {VK_KHR_SURFACE_EXTENSION_NAME,
+                               VK_EXT_METAL_SURFACE_EXTENSION_NAME};
+    ici.enabledExtensionCount = 2;
+    ici.ppEnabledExtensionNames = kInstExts;
+#endif
     if (g.fn.CreateInstance(&ici, nullptr, &g.instance) != VK_SUCCESS) {
         ML_LOG_ERROR("vk: vkCreateInstance failed");
         dlclose(g.loader);
@@ -141,6 +155,14 @@ bool EnsureInit() {
     LOAD_INST(GetPhysicalDeviceQueueFamilyProperties);
     LOAD_INST(CreateDevice);
     LOAD_INST(EnumerateDeviceExtensionProperties);
+    LOAD_INST(DestroySurfaceKHR);
+    LOAD_INST(GetPhysicalDeviceSurfaceCapabilitiesKHR);
+    LOAD_INST(GetPhysicalDeviceSurfaceFormatsKHR);
+    LOAD_INST(GetPhysicalDeviceSurfacePresentModesKHR);
+    LOAD_INST(GetPhysicalDeviceSurfaceSupportKHR);
+#ifdef VK_USE_PLATFORM_METAL_EXT
+    LOAD_INST(CreateMetalSurfaceEXT);
+#endif
 #undef LOAD_INST
 
     uint32_t n = 0;
@@ -188,6 +210,11 @@ bool EnsureInit() {
     dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &dqc;
+#ifdef VK_USE_PLATFORM_METAL_EXT
+    const char* kDevExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    dci.enabledExtensionCount = 1;
+    dci.ppEnabledExtensionNames = kDevExts;
+#endif
     if (g.fn.CreateDevice(g.physical, &dci, nullptr, &g.device) != VK_SUCCESS) {
         ML_LOG_ERROR("vk: vkCreateDevice failed");
         return false;
