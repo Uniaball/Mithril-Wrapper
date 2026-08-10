@@ -134,7 +134,7 @@ static bool EnsureSwapchain() {
         return false;
     g.swap.images = std::move(images);
     g.swap.format = fmt.format;
-    g.swap.color_space = fmt.color_space;
+    g.swap.color_space = fmt.colorSpace;
     g.swap.extent = extent;
 
     for (auto img : g.swap.images) {
