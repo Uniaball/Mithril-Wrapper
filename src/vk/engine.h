@@ -207,6 +207,10 @@ bool Present();
 uint32_t PresentWidth();
 uint32_t PresentHeight();
 
+// True once a live swapchain exists (Metal builds after the first Present()).
+// Lets callers/stubs distinguish real presentation from offscreen fallback.
+bool HasSwapchain();
+
 // ---------------------------------------------------------------------------
 // S5: FBO / renderbuffer support.
 // ---------------------------------------------------------------------------

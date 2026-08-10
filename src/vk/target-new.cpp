@@ -345,4 +345,18 @@ uint32_t PresentHeight() {
     return TargetHeight();
 }
 
+bool HasSwapchain() {
+#ifdef VK_USE_PLATFORM_METAL_EXT
+    return g.swap.handle != VK_NULL_HANDLE;
+#else
+    return false;
+#endif
+}
+
+// Public ABI probe (matches scripts/exported_symbols.txt): tells the app/EGL
+// layer whether a real swapchain is live rather than offscreen fallback.
+extern "C" int mithril_has_swapchain(void) {
+    return HasSwapchain() ? 1 : 0;
+}
+
 } // namespace mithril::vk

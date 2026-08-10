@@ -113,6 +113,14 @@ void* dpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     assert(eglSwapInterval(dpy, 0) == 1);
     assert(eglSwapBuffers(dpy, surf) == 1);
 
+#ifdef __APPLE__
+    // With a CAMetalLayer the swap must have driven a real swapchain; on
+    // offscreen/non-Apple the (valid) fallback keeps mithril_has_swapchain 0.
+    typedef int (*has_swapchain_fn)(void);
+    has_swapchain_fn vkHasSwapchain = (has_swapchain_fn)dlsym(h, "mithril_has_swapchain");
+    if (vkHasSwapchain) assert(vkHasSwapchain() == 1);
+#endif
+
     int ws = 0, hs = 0;
     assert(eglQuerySurface(dpy, surf, EGL_WIDTH, &ws) == 1);
     assert(eglQuerySurface(dpy, surf, EGL_HEIGHT, &hs) == 1);
