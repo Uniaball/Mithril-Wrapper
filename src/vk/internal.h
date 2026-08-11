@@ -139,6 +139,14 @@ struct FnTable {
 
 constexpr VkDeviceSize kUboPoolSize = 1u << 20;   // 1 MiB dynamic UBO pool
 
+// Per-frame-slot descriptor budget: the engine allocates one descriptor set
+// per draw, so the pool must cover the largest frame MC records between two
+// flushes. 256 was exhausted by real 1.21.1 world rendering (routinely
+// hundreds of draws/frame on the Render thread), after which every draw of
+// the frame was dropped. 4096 keeps headroom for large render distances and
+// shader packs while staying a plain memory pool on MoltenVK.
+constexpr uint32_t kDescriptorPoolSets = 4096;
+
 // One reflected mithril_GlobalBlock member (std140 offsets from SPIR-V).
 struct UboMember {
     std::string name;

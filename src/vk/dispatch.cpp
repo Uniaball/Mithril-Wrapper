@@ -351,12 +351,12 @@ bool EnsureInit() {
 
     std::array<VkDescriptorPoolSize, 2> dps{};
     dps[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
-    dps[0].descriptorCount = 256;
+    dps[0].descriptorCount = kDescriptorPoolSets;
     dps[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    dps[1].descriptorCount = 256 * kMaxUnits;
+    dps[1].descriptorCount = kDescriptorPoolSets * kMaxUnits;
     VkDescriptorPoolCreateInfo dpci{};
     dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    dpci.maxSets = 256;
+    dpci.maxSets = kDescriptorPoolSets;
     dpci.poolSizeCount = dps.size();
     dpci.pPoolSizes = dps.data();
     for (uint32_t i = 0; i < kMaxFramesInFlight; ++i) {
