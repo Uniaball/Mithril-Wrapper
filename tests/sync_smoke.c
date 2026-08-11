@@ -72,9 +72,14 @@ static int QuerySynciv(GLsync sync, int pname) {
 }
 
 int main(void) {
-    g_gl = dlopen("./output/libmithril.so", RTLD_NOW);
+#ifdef __APPLE__
+    const char* libpath = "./output/libmithril.dylib";
+#else
+    const char* libpath = "./output/libmithril.so";
+#endif
+    g_gl = dlopen(libpath, RTLD_NOW);
     if (!g_gl) {
-        printf("dlopen failed\n");
+        printf("dlopen failed: %s\n", dlerror());
         return 1;
     }
     LOAD(glClearColor);
@@ -137,9 +142,12 @@ int main(void) {
           "main STATUS signaled after wait");
 
     // The wait drained the pending frame; the readback reflects it.
+    // (Clear colour 0.9 -> 229.5, so the blue channel may round to 229 or
+    // 230 depending on the driver; compare with tolerance.)
     unsigned char px[4];
     glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    CHECK(px[0] == 51 && px[1] == 76 && px[2] == 230,
+    CHECK(px[0] == 51 && px[1] == 76 &&
+              (px[2] == 229 || px[2] == 230),
           "readback matches frame covered by fence (%d,%d,%d)",
           px[0], px[1], px[2]);
 
