@@ -149,14 +149,27 @@ bool EnsureInit() {
     ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ici.pApplicationInfo = &app;
 #ifdef VK_USE_PLATFORM_METAL_EXT
-    const char* kInstExts[] = {VK_KHR_SURFACE_EXTENSION_NAME,
-                               VK_EXT_METAL_SURFACE_EXTENSION_NAME,
-                               VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME};
-    ici.enabledExtensionCount = 3;
+    // Loader-based builds (macOS Homebrew vulkan-loader, Linux) request
+    // VK_KHR_portability_enumeration so the loader surfaces MoltenVK as a
+    // portability ICD. When MoltenVK is dlopen'd directly (MITHRIL_IOS) there
+    // is no loader in between, and MoltenVK itself does not implement this
+    // extension -- requesting it fails vkCreateInstance at boot with
+    // VK_ERROR_EXTENSION_NOT_PRESENT.
+    const char* kInstExts[] = {
+        VK_KHR_SURFACE_EXTENSION_NAME,
+        VK_EXT_METAL_SURFACE_EXTENSION_NAME,
+#ifndef MITHRIL_IOS
+        VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
+#endif
+    };
+    ici.enabledExtensionCount =
+        (uint32_t)(sizeof(kInstExts) / sizeof(kInstExts[0]));
     ici.ppEnabledExtensionNames = kInstExts;
+#ifndef MITHRIL_IOS
     // The loader only enumerates MoltenVK (a portability ICD) physical devices
     // when this flag is set; VK_KHR_portability_enumeration pairs with it.
     ici.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
 #endif
     if (g.fn.CreateInstance(&ici, nullptr, &g.instance) != VK_SUCCESS) {
         ML_LOG_ERROR("vk: vkCreateInstance failed");
