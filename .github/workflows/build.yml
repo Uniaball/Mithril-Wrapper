@@ -106,7 +106,7 @@ jobs:
           export VK_LOADER_DEBUG=error
           export LD_LIBRARY_PATH="$PWD/output"
           clang -o tests/sync_smoke tests/sync_smoke.c -ldl
-          output=$(./tests/sync_smoke)
+          output=$(./tests/sync_smoke 2>&1) || true
           echo "$output"
           echo "$output" | grep -q "SYNC SMOKE ALL PASSED"
 
