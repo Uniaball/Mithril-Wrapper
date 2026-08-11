@@ -103,8 +103,6 @@ void FetchComponents(const uint8_t* p, GLenum type, GLboolean normalized,
 
 } // namespace
 
-extern "C" {
-
 // ---- draw (M3) -------------------------------------------------------------
 
 namespace {
@@ -406,6 +404,8 @@ void DrawElementsImpl(GLenum mode, GLsizei count, GLenum type,
 }
 
 } // namespace
+
+extern "C" {
 
 void APIENTRY glDrawArrays(GLenum mode, GLint first, GLsizei count) {
     DrawCommon(mode, {}, first, count, 0, 1);

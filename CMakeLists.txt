@@ -60,7 +60,6 @@ target_include_directories(mithril PRIVATE
 )
 
 target_link_libraries(mithril PRIVATE
-    glslang::glslang
     glslang::SPIRV
     glslang::glslang-default-resource-limits
     spirv-cross-core

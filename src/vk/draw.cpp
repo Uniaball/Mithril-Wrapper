@@ -483,7 +483,7 @@ void SubmitFlush(bool wait) {
         rbi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         rbi.renderPass = rp;
         rbi.framebuffer = fb_handle;
-        rbi.renderArea = {0, 0, pw, ph};
+        rbi.renderArea = {{0, 0}, {pw, ph}};
         g.fn.CmdBeginRenderPass(frame.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
 
         VkViewport vp{};
