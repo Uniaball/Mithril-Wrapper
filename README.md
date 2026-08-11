@@ -25,6 +25,10 @@ GL → Vulkan → Metal（MoltenVK），无 OpenGL ES 参与。
   - `src/egl/exports.cpp`：window surface 透传 CAMetalLayer、`eglSwapBuffers`→`Present()`、`eglSwapInterval`→vsync、`eglQuerySurface`→present 尺寸。
   - macOS CI：Homebrew `vulkan-loader`+`molten-vk`，`tests/swapchain_smoke.c` 用 objc 建真 CAMetalLayer 走全链路并断言 `mithril_has_swapchain`。
   - Linux（无 Metal）：全部保守降级为 offscreen no-op，既有冒烟不受影响。
+- **M6 stage C 完成（S6 GLsync 同步对象）**：
+  - `src/gl/sync.cpp`：`glFenceSync`/`glDeleteSync`/`glIsSync`/`glClientWaitSync`/`glWaitSync`/`glGetSynciv` 六函数真实现（存活表 + 互斥锁，condition/flags 校验，降级语义）。
+  - `src/vk/draw.cpp` `CreateGLSync`：每条 GLsync 分配专用空命令缓冲 + 独立 VkFence 一起提交（按序位于先前全部工作之后 → `GL_SYNC_GPU_COMMANDS_COMPLETE`）。必须用真实命令缓冲：0 命令缓冲的空批在 MoltenVK 永不触发 fence（lavapipe 会，曾掩盖该问题）。
+  - `tests/sync_smoke.c` 全过（lavapipe + macOS MoltenVK 真机 CI 均绿）：引擎启动前 fence、绘制后等待满足/读回顺序、零超时轮询、waitSync 校验、错误路径；读回容差接受 0.2/0.3/0.9 两方向舍入（lavapipe/MoltenVK 相反）。
 
 ## 快速构建（Linux 开发循环）
 
@@ -55,6 +59,8 @@ gcc -o tests/render3d_smoke tests/render3d_smoke.c -ldl -lm
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/render3d_smoke # 俯视场景：地板网格 + 立方体 + 像素断言，导出 tests/render3d.ppm
 gcc -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/swapchain_smoke # M6 swapchain 契约 + surface 查询（无 Metal 时离屏降级）
+gcc -o tests/sync_smoke tests/sync_smoke.c -ldl -lm
+LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/sync_smoke     # M6 S6 GLsync 同步对象（需 lavapipe/loader）
 python3 scripts/ppm_render.py tests/render3d.ppm tests/render3d.png # PPM→PNG
 ```
 
