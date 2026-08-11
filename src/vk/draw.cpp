@@ -164,7 +164,17 @@ void Draw(const DrawParams& params) {
     VkDescriptorBufferInfo dbi{};
     dbi.buffer = frame.ubo;
     dbi.range = op.ubo_range;
+    // Reserve up front so the push_backs below never reallocate: the writes
+    // carry pointers into dbi/tis (pBufferInfo/pImageInfo), and a realloc of
+    // tis between iterations would leave every previously recorded
+    // pImageInfo dangling. MoltenVK then reads that stale memory while
+    // writing the descriptor set and crashes with a null MVKBuffer deref
+    // (writeDescriptorSetCPUBufferDispatch, si_addr=0x52) on the first draw
+    // that binds more than one sampler.
     std::vector<VkWriteDescriptorSet> writes;
+    std::vector<VkDescriptorImageInfo> tis;
+    writes.reserve(1 + params.sampler_binds.size());
+    tis.reserve(params.sampler_binds.size());
     VkWriteDescriptorSet w{};
     w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     w.dstSet = op.desc_set;
@@ -178,11 +188,11 @@ void Draw(const DrawParams& params) {
     // over by the GL layer. A bound sampler object (sampler_id != 0 with a
     // resident VkSampler) overrides the texture's own baked sampler; absent
     // one the draw falls back to tex->sampler (stage D behaviour). Unbound
-    // units resolve to the 1x1 white dummy.
-    std::vector<VkDescriptorImageInfo> tis;
+    // units resolve to the 1x1 white dummy. Bindings without a resident view
+    // are skipped rather than handed to MoltenVK as a null imageView.
     for (const auto& sb : params.sampler_binds) {
         TexObj* tex = GetTexObj(sb.tex_id);
-        if (!tex) continue;
+        if (!tex || !tex->view) continue;
         VkSampler smp = sb.sampler_id ? GetResidentSampler(sb.sampler_id)
                                       : VK_NULL_HANDLE;
         if (smp == VK_NULL_HANDLE) smp = tex->sampler;   // fall back to texture's own
