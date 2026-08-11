@@ -29,6 +29,12 @@ GL → Vulkan → Metal（MoltenVK），无 OpenGL ES 参与。
   - `src/gl/sync.cpp`：`glFenceSync`/`glDeleteSync`/`glIsSync`/`glClientWaitSync`/`glWaitSync`/`glGetSynciv` 六函数真实现（存活表 + 互斥锁，condition/flags 校验，降级语义）。
   - `src/vk/draw.cpp` `CreateGLSync`：每条 GLsync 分配专用空命令缓冲 + 独立 VkFence 一起提交（按序位于先前全部工作之后 → `GL_SYNC_GPU_COMMANDS_COMPLETE`）。必须用真实命令缓冲：0 命令缓冲的空批在 MoltenVK 永不触发 fence（lavapipe 会，曾掩盖该问题）。
   - `tests/sync_smoke.c` 全过（lavapipe + macOS MoltenVK 真机 CI 均绿）：引擎启动前 fence、绘制后等待满足/读回顺序、零超时轮询、waitSync 校验、错误路径；读回容差接受 0.2/0.3/0.9 两方向舍入（lavapipe/MoltenVK 相反）。
+- **M6 stage D 完成（S6 Query 对象 + primitive restart + provoking vertex）**：
+  - `src/vk/query.cpp`：QueryObj 包装每帧 VkQueryPool 槽（occ/ts 各 4096）；遮挡查询在 Draw() 内给范围内每条 draw 记槽（CmdBeginQuery/End 括住），RetireFrame 栅栏后 `RetireFrameQueries` 汇总；SAMPLES_PASSED 依赖 occlusionQueryPrecise（无则降级读 0），ANY_SAMPLES_PASSED 不依赖；TIME_ELAPSED = begin/end 双时间戳差值 × timestampPeriod；GL_TIMESTAMP 单写 × period；阻塞读走 SubmitFlush(true)。
+  - `src/gl/query.cpp`：`glGenQueries`/`glDeleteQueries`/`glIsQuery`/`glBeginQuery`/`glEndQuery`/`glQueryCounter`/`glGetQueryiv`/`glGetQueryObject{iv,uiv,i64v,ui64v}` 13 函数（每 target 至多一活动 query、错误路径全套、ANY 结果归一化 0/1）。
+  - `glPrimitiveRestartIndex`：GL 层改写 restart index→0xFFFFFFFF，DrawCommon v_count 跳过标记，pipeline `ia.primitiveRestartEnable` + key `|PR`。
+  - `glProvokingVertex`：入 PipelineState key `|PV`，设备声明 VK_EXT_provoking_vertex 时启用 provokingVertexLast（LAST 与 GL 默认一致，无扩展时保持隐式行为）。
+  - `tests/query_smoke.c` 60 断言全过（lavapipe：SAMPLES_PASSED=253888、深度遮挡 0/前置 1、TIME_ELAPSED/GL_TIMESTAMP 非零、restart 两独立三角 + 无 restart fan 覆盖、错误路径全套）。
 
 ## 快速构建（Linux 开发循环）
 
@@ -61,6 +67,8 @@ gcc -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/swapchain_smoke # M6 swapchain 契约 + surface 查询（无 Metal 时离屏降级）
 gcc -o tests/sync_smoke tests/sync_smoke.c -ldl -lm
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/sync_smoke     # M6 S6 GLsync 同步对象（需 lavapipe/loader）
+gcc -o tests/query_smoke tests/query_smoke.c -ldl
+LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/query_smoke   # M6 S6 查询对象 + primitive restart（需 lavapipe/loader）
 python3 scripts/ppm_render.py tests/render3d.ppm tests/render3d.png # PPM→PNG
 ```
 
@@ -80,5 +88,5 @@ src/shader  glslang GLSL→SPIR-V + SPIRV-Cross 反射（M2 完成）
 src/state   GL 状态引擎（Context 结构、错误队列、capability 表）
 src/vk      Vulkan 后端（dlsym 加载器、离屏渲染、动态 UBO 池、读回；engine/dispatch/target/swapchain/pipeline/fbo/draw 按域拆分）
 scripts/    gen_gl_stubs.py（stub 生成器）、exported_symbols.txt
-tests/      contract_smoke.c / state_smoke.c / shader_smoke.c / draw_smoke.c / texture_smoke.c / fbo_smoke.c / 3d_smoke.c / render3d_smoke.c / swapchain_smoke.c
+tests/      contract_smoke.c / state_smoke.c / shader_smoke.c / draw_smoke.c / texture_smoke.c / fbo_smoke.c / 3d_smoke.c / render3d_smoke.c / swapchain_smoke.c / sync_smoke.c / query_smoke.c
 ```

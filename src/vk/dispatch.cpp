@@ -90,6 +90,14 @@ void LoadDeviceFunctions() {
     LOAD_DEV(QueuePresentKHR);
     LOAD_DEV(CmdSetViewport);
     LOAD_DEV(CmdSetScissor);
+    // M6 stage D: query objects (occlusion + timestamps).
+    LOAD_DEV(CreateQueryPool);
+    LOAD_DEV(DestroyQueryPool);
+    LOAD_DEV(CmdBeginQuery);
+    LOAD_DEV(CmdEndQuery);
+    LOAD_DEV(CmdWriteTimestamp);
+    LOAD_DEV(CmdResetQueryPool);
+    LOAD_DEV(GetQueryPoolResults);
 #undef LOAD_DEV
 }
 
@@ -188,6 +196,15 @@ bool EnsureInit() {
     else
         g.ubo_align = 16;
 
+    // M6 stage D: timestamp + occlusion query capabilities. Timestamp support
+    // needs the graphics queue's timestamp precision too (the device limits
+    // only carry the flag + period; per-queue bits live in the queue-family
+    // properties), so the full check happens after queue selection below.
+    g.ts_period_ns = (double)props.limits.timestampPeriod;
+    VkPhysicalDeviceFeatures dev_feats;
+    g.fn.GetPhysicalDeviceFeatures(g.physical, &dev_feats);
+    g.occlusion_precise = (dev_feats.occlusionQueryPrecise == VK_TRUE);
+
     uint32_t n_fam = 0;
     g.fn.GetPhysicalDeviceQueueFamilyProperties(g.physical, &n_fam, nullptr);
     std::vector<VkQueueFamilyProperties> fam(n_fam);
@@ -204,6 +221,15 @@ bool EnsureInit() {
         ML_LOG_ERROR("vk: no graphics queue family");
         return false;
     }
+    // M6 stage D: complete the timestamp capability check (graphics queue's
+    // timestamp precision) once the graphics queue family is known.
+    if (props.limits.timestampComputeAndGraphics &&
+        fam[g.queue_family].timestampValidBits > 0) {
+        g.have_timestamps = true;
+        g.ts_valid_mask = fam[g.queue_family].timestampValidBits >= 64
+                              ? ~0ull
+                              : ((1ull << fam[g.queue_family].timestampValidBits) - 1);
+    }
 
     float prio = 1.0f;
     VkDeviceQueueCreateInfo dqc{};
@@ -211,21 +237,58 @@ bool EnsureInit() {
     dqc.queueFamilyIndex = g.queue_family;
     dqc.queueCount = 1;
     dqc.pQueuePriorities = &prio;
+
+    // Device extensions. VK_EXT_provoking_vertex (glProvokingVertex, S6) is
+    // added when the device advertises it; the LAST convention it needs to
+    // express matches GL's default, so without it the pipeline simply keeps
+    // the implicit behaviour.
+    std::vector<const char*> dev_exts;
+#ifdef VK_USE_PLATFORM_METAL_EXT
+    dev_exts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+#endif
+    uint32_t n_ext = 0;
+    g.fn.EnumerateDeviceExtensionProperties(g.physical, nullptr, &n_ext, nullptr);
+    std::vector<VkExtensionProperties> ext_props(n_ext);
+    g.fn.EnumerateDeviceExtensionProperties(g.physical, nullptr, &n_ext,
+                                            ext_props.data());
+    for (const auto& e : ext_props) {
+        if (!std::strcmp(e.extensionName, VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME))
+            g.have_provoking_vertex = true;
+    }
+    if (g.have_provoking_vertex)
+        dev_exts.push_back(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME);
+
     VkDeviceCreateInfo dci{};
     dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &dqc;
-#ifdef VK_USE_PLATFORM_METAL_EXT
-    const char* kDevExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-    dci.enabledExtensionCount = 1;
-    dci.ppEnabledExtensionNames = kDevExts;
-#endif
+    dci.enabledExtensionCount = (uint32_t)dev_exts.size();
+    dci.ppEnabledExtensionNames = dev_exts.data();
+    // M6 stage D: request precise occlusion counting when the device has it
+    // (SAMPLES_PASSED needs exact sample counts; ANY_SAMPLES_PASSED works
+    // either way from the non-zero slot sums), and the provoking-vertex LAST
+    // mode (GL default) when the extension is present.
+    VkPhysicalDeviceFeatures2 feats2{};
+    feats2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    feats2.features.occlusionQueryPrecise =
+        g.occlusion_precise ? VK_TRUE : VK_FALSE;
+    VkPhysicalDeviceProvokingVertexFeaturesEXT pvf{};
+    if (g.have_provoking_vertex) {
+        pvf.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT;
+        pvf.provokingVertexLast = VK_TRUE;
+        pvf.pNext = feats2.pNext;
+        feats2.pNext = &pvf;
+    }
+    dci.pNext = &feats2;
     if (g.fn.CreateDevice(g.physical, &dci, nullptr, &g.device) != VK_SUCCESS) {
         ML_LOG_ERROR("vk: vkCreateDevice failed");
         return false;
     }
     LoadDeviceFunctions();
     g.fn.GetDeviceQueue(g.device, g.queue_family, 0, &g.queue);
+
+    // M6 stage D: per-frame occlusion/timestamp query pools.
+    CreateQueryPools();
 
     // Dynamic UBO pool (host visible) per frame slot: an in-flight frame may
     // still be reading its region while the next frame records into the other

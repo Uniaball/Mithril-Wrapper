@@ -37,6 +37,7 @@ add_library(mithril SHARED
     src/gl/stub.cpp
     src/gl/sync.cpp
     src/gl/fbo.cpp
+    src/gl/query.cpp
     src/shader/glsl.cpp
     src/shader/reflect.cpp
     src/shader/registry.cpp
@@ -50,6 +51,7 @@ add_library(mithril SHARED
     src/vk/engine.cpp
     src/vk/texture.cpp
     src/vk/fbo.cpp
+    src/vk/query.cpp
 )
 
 target_include_directories(mithril PRIVATE

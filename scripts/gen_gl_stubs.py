@@ -112,6 +112,12 @@ MGL_IMPL = frozenset({
     # S6 sync objects (M6 stage C): GLsync wrapping a VkFence.
     "glFenceSync", "glDeleteSync", "glIsSync", "glClientWaitSync",
     "glWaitSync", "glGetSynciv",
+    # S6 query objects (M6 stage D): glBeginQuery..glGetQueryObject family +
+    # primitive restart / provoking vertex state (src/gl/query.cpp).
+    "glGenQueries", "glDeleteQueries", "glIsQuery", "glBeginQuery", "glEndQuery",
+    "glGetQueryiv", "glGetQueryObjectiv", "glGetQueryObjectuiv",
+    "glGetQueryObjecti64v", "glGetQueryObjectui64v", "glQueryCounter",
+    "glPrimitiveRestartIndex", "glProvokingVertex",
 })
 
 
@@ -121,7 +127,10 @@ def parse_list():
     for line in txt.splitlines():
         line = line.strip()
         if line.startswith("gl"):
-            names.update(line.split())
+            # Status tokens (✅) may sit in the same row; only gl* are names.
+            for tok in line.split():
+                if tok.startswith("gl"):
+                    names.add(tok)
     return sorted(names)
 
 

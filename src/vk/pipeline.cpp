@@ -117,6 +117,8 @@ std::string StateSignature(const PipelineState& ps) {
          std::string(ps.color_wmask_b ? "1" : "0") +
          std::string(ps.color_wmask_a ? "1" : "0");
     k += "|R" + std::string(ps.scissor_test ? "1" : "0");
+    k += "|PR" + std::string(ps.primitive_restart ? "1" : "0");
+    k += "|PV" + std::to_string(ps.provoking_vertex);
     return k;
 }
 
@@ -213,6 +215,10 @@ VkPipeline GetOrCreatePipeline(const Program& prog, const DrawOp& op) {
     VkPipelineInputAssemblyStateCreateInfo ia{};
     ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     ia.topology = kTopologyMap[op.topology % 3];
+    // M6 stage D / S6: primitive restart (UINT32 indices, restart 0xFFFFFFFF).
+    // Triangle list/strip/fan are the only topologies this backend rasterises
+    // and all three are valid with primitiveRestartEnable.
+    ia.primitiveRestartEnable = op.pipe.primitive_restart ? VK_TRUE : VK_FALSE;
 
     VkPipelineViewportStateCreateInfo vp{};
     vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -237,6 +243,21 @@ VkPipeline GetOrCreatePipeline(const Program& prog, const DrawOp& op) {
     rs.frontFace = op.pipe.front_face == GL_CW ? VK_FRONT_FACE_COUNTER_CLOCKWISE
                                                 : VK_FRONT_FACE_CLOCKWISE;
     rs.lineWidth = 1.0f;
+    // M6 stage D / S6: provoking vertex convention (VK_EXT_provoking_vertex).
+    // GL's default (LAST_VERTEX_CONVENTION) matches the pipeline's implicit
+    // behaviour, so the extension only changes anything when the app picks
+    // FIRST; without the device extension it degrades silently.
+    VkPipelineRasterizationProvokingVertexStateCreateInfoEXT pv{};
+    if (g.have_provoking_vertex) {
+        pv.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_PROVOKING_VERTEX_STATE_CREATE_INFO_EXT;
+        pv.provokingVertexMode =
+            op.pipe.provoking_vertex == GL_FIRST_VERTEX_CONVENTION
+                ? VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT
+                : VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+        pv.pNext = rs.pNext;
+        rs.pNext = &pv;
+    }
 
     VkPipelineMultisampleStateCreateInfo ms{};
     ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;

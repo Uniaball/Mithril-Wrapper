@@ -92,6 +92,13 @@ struct PipelineState {
     // per-channel color write mask
     GLboolean color_wmask_r = GL_TRUE, color_wmask_g = GL_TRUE;
     GLboolean color_wmask_b = GL_TRUE, color_wmask_a = GL_TRUE;
+    // primitive restart (GL_PRIMITIVE_RESTART cap). The GL layer rewrites the
+    // restart index to the fixed UINT32 restart value 0xFFFFFFFF, which the
+    // pipeline's input-assembly restart uses.
+    bool primitive_restart = false;
+    // provoking vertex convention (glProvokingVertex); maps to the
+    // VK_EXT_provoking_vertex mode when the extension is live.
+    GLenum provoking_vertex = GL_LAST_VERTEX_CONVENTION;
 };
 
 // Everything one GL draw call needs. `uniforms` maps mithril_GlobalBlock
@@ -285,5 +292,46 @@ void BlitFramebuffer(uint64_t src_fbo, uint64_t dst_fbo,
                      GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1,
                      GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1,
                      GLbitfield mask, GLenum filter);
+
+// ---------------------------------------------------------------------------
+// M6 stage D: query objects (glBeginQuery / glQueryCounter, S6).
+// ---------------------------------------------------------------------------
+
+// Begin an occlusion query capture (GL_SAMPLES_PASSED / ANY_SAMPLES_PASSED).
+// Every draw issued until EndOcclusionQuery(sameHandle) brackets one occlu-
+// sion slot; the query result is the summed sample count. Returns a handle the
+// GL layer stores as its backend query; 0 degrades the query (result reads 0,
+// immediately available, not cached). Sampled occlusion precision follows the
+// occlusionQueryPrecise device feature.
+uint64_t BeginOcclusionQuery(uint32_t target);
+// Stop an occlusion capture; the query's slots stay live until the frames
+// that recorded them retire (then results are drained into the query).
+void EndOcclusionQuery(uint64_t handle);
+// Begin/end a GL_TIME_ELAPSED interval: allocates the timestamp slots and
+// records the vkCmdWriteTimestamp ops at the current draw-slot position.
+// Two distinct pool slots bracket the draws in between.
+uint64_t BeginTimeElapsedQuery();
+void EndTimeElapsedQuery(uint64_t handle);
+// One GL_TIMESTAMP sample (glQueryCounter): a single timestamp slot.
+uint64_t QueryCounterTimestamp();
+// True once the query's data has fully landed: every occlusion slot retired /
+// timestamp written, or the query is degraded (unavailable).
+bool IsQueryResultAvailable(uint64_t handle);
+// Read the query result. `wait` blocks (submits + retires the owning frames)
+// until available; without it a not-yet-ready query returns false and leaves
+// *out untouched. Values are scaled to GL semantics: occlusion = sample count
+// (non-zero normalised to 1 for ANY_SAMPLES_PASSED by the GL layer),
+// TIME_ELAPSED/TIMESTAMP = nanoseconds.
+bool GetQueryResult64(uint64_t handle, bool wait, uint64_t* out);
+// Drop the query object and any slots the frames have not retired yet.
+void DeleteBackendQuery(uint64_t handle);
+// Timestamp-query capability (timestampComputeAndGraphics + valid bits).
+bool IsTimerQuerySupported();
+// Occlusion query capability (occlusion query pool creation succeeded).
+bool IsOcclusionSupported();
+// Precise occlusion counting (occlusionQueryPrecise device feature).
+bool IsPreciseOcclusionSupported();
+// Retire occlusion/timestamp results out of a given frame slot's pools.
+void RetireFrameQueries(uint32_t idx);
 
 } // namespace mithril::vk

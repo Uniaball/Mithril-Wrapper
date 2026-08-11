@@ -197,6 +197,11 @@ void Draw(const DrawParams& params) {
     g.fn.UpdateDescriptorSets(g.device, (uint32_t)writes.size(), writes.data(),
                               0, nullptr);
 
+    // M6 stage D: if an occlusion capture is active, bracket this draw into
+    // one occlusion slot of the current frame's pool (registers the slot
+    // under the active query handle for draining at retire time).
+    if (frame.occ_pool && AllocDrawOccSlot(&op.occ_slot)) op.has_occ_slot = true;
+
     frame.frame_draws.push_back(std::move(op));
     g.frame_dirty = true;
 }
@@ -229,6 +234,9 @@ static void RetireFrame(uint32_t idx) {
     if (!fr.in_flight) return;
     g.fn.WaitForFences(g.device, 1, &fr.fence, VK_TRUE, UINT64_MAX);
     g.fn.ResetFences(g.device, 1, &fr.fence);
+    // M6 stage D: drain this frame's occlusion/timestamp slot values into the
+    // owning QueryObjs (safe: the fence above guarantees GPU completion).
+    RetireFrameQueries(idx);
     for (auto& op : fr.frame_draws) DestroyOpBuffers(op);
     fr.frame_draws.clear();
     g.fn.ResetDescriptorPool(g.device, fr.desc_pool, 0);
@@ -382,6 +390,17 @@ void SubmitFlush(bool wait) {
     g.fn.ResetCommandBuffer(frame.cmd, 0);
     g.fn.BeginCommandBuffer(frame.cmd, &bi);
 
+    // M6 stage D: reset this frame's query pools at the start of recording.
+    // A slot is only re-recorded after retire, so this reset is always ordered
+    // after the last submission that used the pool (fresh pools get their
+    // first reset here too).
+    if (frame.occ_pool != VK_NULL_HANDLE)
+        g.fn.CmdResetQueryPool(frame.cmd, frame.occ_pool, 0,
+                               kOcclusionSlotsPerFrame);
+    if (frame.ts_pool != VK_NULL_HANDLE)
+        g.fn.CmdResetQueryPool(frame.cmd, frame.ts_pool, 0,
+                               kTimestampSlotsPerFrame);
+
     // Optional explicit clear of the current target. MRT: one clear per
     // colour attachment (only those selected by the draw buffers).
     VkImageSubresourceRange color_range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -478,7 +497,22 @@ void SubmitFlush(bool wait) {
 
         // Per-draw scissor: GL_SCISSOR_TEST gates a per-draw rectangle
         // (dynamic state), otherwise the full target.
-        for (const auto& op : frame.frame_draws) {
+        // M6 stage D: timestamp GL calls fired between draw records interleave
+        // at their draw-slot position, and each draw inside an occlusion
+        // capture is bracketed by CmdBeginQuery/CmdEndQuery (one slot).
+        size_t tw = 0;
+        auto emit_ts = [&](const FrameSlot::TsWrite& t) {
+            if (frame.ts_pool && t.slot < kTimestampSlotsPerFrame)
+                g.fn.CmdWriteTimestamp(frame.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                       frame.ts_pool, t.slot);
+        };
+        for (size_t di = 0; di < frame.frame_draws.size(); ++di) {
+            const DrawOp& op = frame.frame_draws[di];
+            while (tw < frame.ts_writes.size() &&
+                   frame.ts_writes[tw].pos <= di) {
+                emit_ts(frame.ts_writes[tw]);
+                ++tw;
+            }
             VkPipeline pipe =
                 GetOrCreatePipeline(g_programs.at(op.program), op);
             if (pipe == VK_NULL_HANDLE) continue;
@@ -518,12 +552,22 @@ void SubmitFlush(bool wait) {
             g.fn.CmdBindDescriptorSets(frame.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                        g.pipeline_layout, 0, 1, &op.desc_set,
                                        1, &dyn);
+            if (op.has_occ_slot && frame.occ_pool)
+                g.fn.CmdBeginQuery(frame.cmd, frame.occ_pool, op.occ_slot, 0);
             if (op.index_count) {
                 g.fn.CmdDrawIndexed(frame.cmd, op.index_count, op.instance_count,
                                     0, 0, 0);
             } else {
                 g.fn.CmdDraw(frame.cmd, op.vertex_count, op.instance_count, 0, 0);
             }
+            if (op.has_occ_slot && frame.occ_pool)
+                g.fn.CmdEndQuery(frame.cmd, frame.occ_pool, op.occ_slot);
+        }
+        // Timestamp writes recorded after the last draw fire at the tail of
+        // the pass.
+        while (tw < frame.ts_writes.size()) {
+            emit_ts(frame.ts_writes[tw]);
+            ++tw;
         }
         g.fn.CmdEndRenderPass(frame.cmd);
     }

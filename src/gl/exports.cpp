@@ -12,10 +12,6 @@ extern "C" {
     mithril::GlStubCalled("glBeginConditionalRender");
   }
 
-  void APIENTRY glBeginQuery(GLenum target, GLuint id) {
-    mithril::GlStubCalled("glBeginQuery");
-  }
-
   void APIENTRY glBeginTransformFeedback(GLenum primitiveMode) {
     mithril::GlStubCalled("glBeginTransformFeedback");
   }
@@ -56,10 +52,6 @@ extern "C" {
     mithril::GlStubCalled("glClearBufferuiv");
   }
 
-  void APIENTRY glDeleteQueries(GLsizei n, const GLuint *ids) {
-    mithril::GlStubCalled("glDeleteQueries");
-  }
-
   void APIENTRY glDeleteSamplers(GLsizei count, const GLuint *samplers) {
     mithril::GlStubCalled("glDeleteSamplers");
   }
@@ -68,16 +60,8 @@ extern "C" {
     mithril::GlStubCalled("glEndConditionalRender");
   }
 
-  void APIENTRY glEndQuery(GLenum target) {
-    mithril::GlStubCalled("glEndQuery");
-  }
-
   void APIENTRY glEndTransformFeedback(void) {
     mithril::GlStubCalled("glEndTransformFeedback");
-  }
-
-  void APIENTRY glGenQueries(GLsizei n, GLuint *ids) {
-    mithril::GlStubCalled("glGenQueries");
   }
 
   void APIENTRY glGenSamplers(GLsizei count, GLuint *samplers) {
@@ -114,26 +98,6 @@ extern "C" {
     mithril::GlStubCalled("glGetMultisamplefv");
   }
 
-  void APIENTRY glGetQueryObjecti64v(GLuint id, GLenum pname, GLint64 *params) {
-    mithril::GlStubCalled("glGetQueryObjecti64v");
-  }
-
-  void APIENTRY glGetQueryObjectiv(GLuint id, GLenum pname, GLint *params) {
-    mithril::GlStubCalled("glGetQueryObjectiv");
-  }
-
-  void APIENTRY glGetQueryObjectui64v(GLuint id, GLenum pname, GLuint64 *params) {
-    mithril::GlStubCalled("glGetQueryObjectui64v");
-  }
-
-  void APIENTRY glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint *params) {
-    mithril::GlStubCalled("glGetQueryObjectuiv");
-  }
-
-  void APIENTRY glGetQueryiv(GLenum target, GLenum pname, GLint *params) {
-    mithril::GlStubCalled("glGetQueryiv");
-  }
-
   void APIENTRY glGetSamplerParameterIiv(GLuint sampler, GLenum pname, GLint *params) {
     mithril::GlStubCalled("glGetSamplerParameterIiv");
   }
@@ -163,11 +127,6 @@ extern "C" {
     mithril::GlStubCalled("glGetUniformIndices");
   }
 
-  GLboolean APIENTRY glIsQuery(GLuint id) {
-    mithril::GlStubCalled("glIsQuery");
-    return 0;
-  }
-
   GLboolean APIENTRY glIsSampler(GLuint sampler) {
     mithril::GlStubCalled("glIsSampler");
     return 0;
@@ -187,18 +146,6 @@ extern "C" {
 
   void APIENTRY glPointParameteriv(GLenum pname, const GLint *params) {
     mithril::GlStubCalled("glPointParameteriv");
-  }
-
-  void APIENTRY glPrimitiveRestartIndex(GLuint index) {
-    mithril::GlStubCalled("glPrimitiveRestartIndex");
-  }
-
-  void APIENTRY glProvokingVertex(GLenum mode) {
-    mithril::GlStubCalled("glProvokingVertex");
-  }
-
-  void APIENTRY glQueryCounter(GLuint id, GLenum target) {
-    mithril::GlStubCalled("glQueryCounter");
   }
 
   void APIENTRY glSamplerParameterIiv(GLuint sampler, GLenum pname, const GLint *param) {

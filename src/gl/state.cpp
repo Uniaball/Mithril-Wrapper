@@ -22,6 +22,7 @@ static bool CapValid(GLenum cap) {
         case GL_RASTERIZER_DISCARD:
         case GL_PROGRAM_POINT_SIZE:
         case GL_LOGIC_OP_MODE:
+        case GL_PRIMITIVE_RESTART:
             return true;
         default:
             return false;

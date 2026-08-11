@@ -179,6 +179,8 @@ v::PipelineState BuildPipelineState() {
     ps.color_wmask_g = st.color_wmask[1];
     ps.color_wmask_b = st.color_wmask[2];
     ps.color_wmask_a = st.color_wmask[3];
+    ps.primitive_restart = st.caps.Test(GL_PRIMITIVE_RESTART);
+    ps.provoking_vertex = st.provoking_vertex;
     return ps;
 }
 
@@ -242,7 +244,8 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
         v_count = count;
     } else {
         uint32_t m = 0;
-        for (uint32_t i : idx) m = std::max(m, i);
+        for (uint32_t i : idx)
+            if (i != 0xFFFFFFFFu) m = std::max(m, i);   // skip restart marker
         v_count = (GLsizei)(m + 1);
     }
 
@@ -389,6 +392,16 @@ void DrawElementsImpl(GLenum mode, GLsizei count, GLenum type,
     std::vector<uint32_t> idx = LoadIndices(type, indices, count, start, end, &err);
     if (err) { PUSH_ERROR(err); return; }
     if (idx.empty()) return;
+    // M6 stage D / S6: GL_PRIMITIVE_RESTART rewrites the GL restart index to
+    // the Vulkan UINT32 restart value (0xFFFFFFFF), which the pipeline's input
+    // assembly restart reacts to. Done here so DrawCommon's vertex-payload
+    // sizing (v_count) can exclude the marker (it is not a real vertex ref).
+    const s::GLState& st = s::GetState();
+    if (st.caps.Test(GL_PRIMITIVE_RESTART)) {
+        const GLuint rindex = st.restart_index;
+        for (auto& v : idx)
+            if (v == rindex) v = 0xFFFFFFFFu;
+    }
     DrawCommon(mode, idx, 0, count, base_vertex, instance_count);
 }
 

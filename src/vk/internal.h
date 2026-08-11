@@ -125,6 +125,14 @@ struct FnTable {
     ML_FN(CmdResolveImage);
     ML_FN(CmdSetViewport);
     ML_FN(CmdSetScissor);
+    // M6 stage D: query objects (occlusion + timestamps).
+    ML_FN(CreateQueryPool);
+    ML_FN(DestroyQueryPool);
+    ML_FN(CmdBeginQuery);
+    ML_FN(CmdEndQuery);
+    ML_FN(CmdWriteTimestamp);
+    ML_FN(CmdResetQueryPool);
+    ML_FN(GetQueryPoolResults);
 };
 
 #undef ML_FN
@@ -243,6 +251,13 @@ struct DrawOp {
     std::vector<std::pair<uint32_t, VkDescriptorImageInfo>> tex_binds;
     // M5: pipeline-affecting state captured at draw-record time.
     PipelineState pipe;
+    // M6 stage D: occlusion query slot bracketing this draw
+    // (VK_QUERY_TYPE_OCCLUSION in the current frame's pool). Query slots
+    // behave like the pool they live in: a slot's result is valid from its
+    // draw until the owning frame slot is retired, so results land in the
+    // query object at retire time.
+    bool has_occ_slot = false;
+    uint32_t occ_slot = 0;
     // S5: render pass signature for the target this draw records into
     // (empty => default framebuffer). Included in the pipeline cache key and
     // the VkGraphicsPipelineCreateInfo.renderPass. `color_count`/`samples`
@@ -274,6 +289,41 @@ struct GLSyncObj {
 
 constexpr uint32_t kMaxFramesInFlight = 2;
 
+// M6 stage D: query objects (occlusion + timestamps).
+//
+// Occlusion (GL_SAMPLES_PASSED / GL_ANY_SAMPLES_PASSED): each draw records
+// one vkCmdBeginQuery/vkCmdEndQuery slot in the current frame's occlusion
+// pool; a query wraps many slots across frames (the draw sequence between
+// BeginQuery and EndQuery). The result is the sum of the slot samples, so we
+// drain slot values into `acc` at retire time, once the frame fence signals.
+//
+// Timestamps (GL_TIME_ELAPSED via BeginQuery, GL_TIMESTAMP via QueryCounter):
+// a timestamp slot in the frame's timestamp pool, written around the draws
+// with vkCmdWriteTimestamp; TIME_ELAPSED is end - begin ticks scaled by the
+// device's timestampPeriod. Degraded (no backend / feature) => handle 0, the
+// GL layer reads a zero immediately-available result without caching.
+struct QueryObj {
+    uint32_t target = 0;       // GL target (for GL_QUERY_TARGET echo)
+    // Occlusion slots: every (frame idx, pool slot) this query bracketed.
+    std::vector<std::pair<uint16_t, uint32_t>> occ_slots;
+    uint64_t acc = 0;          // summed slot samples drained at retire
+    uint32_t occ_expected = 0; // slots registered
+    uint32_t occ_drained = 0;  // slots drained into `acc`
+    // Timestamp slots (frame idx + pool slot, -1 = none).
+    int ts_begin_frame = -1, ts_begin_slot = -1;
+    int ts_end_frame = -1, ts_end_slot = -1;
+    int ts_single_frame = -1, ts_single_slot = -1;
+    uint64_t ts_begin_ticks = 0, ts_end_ticks = 0, ts_single_ticks = 0;
+    bool ts_begin_ready = false, ts_end_ready = false, ts_single_ready = false;
+    bool active = false;       // BeginQuery seen, EndQuery not yet
+    bool ended = false;        // EndQuery seen (occlusion) / QueryCounter done
+    uint64_t result = 0;       // lazy cached final result
+    bool result_cached = false;
+};
+
+constexpr uint32_t kOcclusionSlotsPerFrame = 4096;
+constexpr uint32_t kTimestampSlotsPerFrame = 4096;
+
 struct FrameSlot {
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
@@ -284,6 +334,26 @@ struct FrameSlot {
     VkDeviceSize ubo_next = 0;
     bool in_flight = false;          // submitted async and not yet retired
     std::vector<DrawOp> frame_draws; // recorded draws; staging freed on retire
+    // M6 stage D: per-frame query pools. Slots are reset together after the
+    // frame fence signals (results drained into the owning QueryObj first).
+    VkQueryPool occ_pool = VK_NULL_HANDLE;
+    VkQueryPool ts_pool = VK_NULL_HANDLE;
+    uint32_t occ_cursor = 0;
+    uint32_t ts_cursor = 0;
+    // Timestamp writes requested mid-frame (GL call happened between draws).
+    // Recorded into the command buffer at their draw-slot position: each op
+    // names the QueryObj handle + whether it is the TIME_ELAPSED begin write,
+    // and `pos` = number of draws recorded when the GL call fired (SubmitFlush
+    // interleaves the write into the draw loop at that position).
+    struct TsWrite {
+        uint64_t query = 0;    // QueryObj handle
+        bool is_begin = false; // TIME_ELAPSED begin vs end
+        uint32_t slot = 0;     // ts pool slot
+        uint32_t pos = 0;      // frame_draws.size() when the write fired
+    };
+    std::vector<TsWrite> ts_writes;
+    // Occlusion slots taken this frame: (QueryObj handle).
+    std::vector<uint64_t> occ_queries;   // queries with slots in this frame
 };
 
 struct Swapchain {
@@ -340,6 +410,22 @@ struct Engine {
     std::unordered_map<uint64_t, GLSyncObj> glsyncs;
     uint64_t glsync_next = 1;   // handles start at 1 (0 = degraded)
 
+    // M6 stage D: live query objects (handle -> object).
+    std::unordered_map<uint64_t, QueryObj> queries;
+    uint64_t query_next = 1;    // handles start at 1 (0 = degraded)
+
+    // Timestamp support facts captured at init.
+    bool have_timestamps = false;          // timestampComputeAndGraphics + valid bits
+    double ts_period_ns = 1.0;             // timestampPeriod as ns per tick
+    uint64_t ts_valid_mask = ~0ull;        // timestampValidBits => mask
+    bool occlusion_precise = false;        // occlusionQueryPrecise feature
+    bool have_occlusion = false;           // occlusion query pool created OK
+    bool have_provoking_vertex = false;    // VK_EXT_provoking_vertex device ext
+    // M6 stage D: currently active occlusion query handle (0 = none). Every
+    // draw recorded while this is non-zero brackets one occlusion slot in the
+    // current frame's pool; Draw() registers the slot under this handle.
+    uint64_t active_occ = 0;
+
     // S5: FBO/renderbuffer tables + current draw/read framebuffer bindings.
     std::unordered_map<uint64_t, RbObj> renderbuffers;
     std::unordered_map<uint64_t, FboObj> framebuffers;
@@ -388,6 +474,17 @@ extern std::unordered_map<std::string, VkPipeline> g_pipelines;
 // ---- shared helpers (defined in target.cpp) ------------------------------
 
 VkDeviceSize AlignUp(VkDeviceSize v, VkDeviceSize a);
+
+// M6 stage D: create the per-frame occlusion + timestamp query pools once the
+// device is live (query.cpp). Uses the capability facts captured at init.
+void CreateQueryPools();
+
+// M6 stage D: allocate an occlusion slot for the draw being recorded right
+// now, registering it under the active occlusion query (returns false when no
+// capture is active or the frame's pool is exhausted). Query.cpp owns the
+// slot accounting; draw.cpp calls it inside Draw() and stores the slot in the
+// DrawOp so SubmitFlush can bracket the draw with CmdBeginQuery/CmdEndQuery.
+bool AllocDrawOccSlot(uint32_t* out_slot);
 
 VkResult FindMemoryType(uint32_t bits, VkMemoryPropertyFlags want,
                         uint32_t* out);

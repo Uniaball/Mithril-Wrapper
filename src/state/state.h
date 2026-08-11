@@ -106,6 +106,9 @@ struct GLState {
     GLenum hint_derivative = GL_DONT_CARE;
     GLenum clamp_color_mode = GL_FIXED_ONLY;
     std::array<GLuint, 32> sample_masks{};
+    // S6: primitive restart + provoking vertex convention (pipeline key).
+    GLuint restart_index = 0;                  // glPrimitiveRestartIndex
+    GLenum provoking_vertex = GL_LAST_VERTEX_CONVENTION;
     PixelStore pixels;
     ErrorQueue errors;
     GLenum active_texture = GL_TEXTURE0;
