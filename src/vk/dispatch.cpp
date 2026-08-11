@@ -104,7 +104,16 @@ void LoadDeviceFunctions() {
 bool EnsureInit() {
     if (g.initialized) return true;
 
+    // iOS has no Vulkan loader: MoltenVK is dlopen'd directly from the app
+    // bundle. iOS dyld cannot resolve a bare "libMoltenVK.dylib" leaf name to
+    // an embedded dylib, so anchor the lookup to this dylib's own directory --
+    // libmithril.dylib and libMoltenVK.dylib ship side by side under the
+    // launcher's Frameworks/. macOS keeps the loader-first order (Homebrew
+    // vulkan-loader) and Linux the libvulkan*.so family.
     static const char* kLoaders[] = {
+#ifdef MITHRIL_IOS
+        "@loader_path/libMoltenVK.dylib",
+#endif
         "libvulkan.so.1", "libvulkan.so", "libvulkan.dylib", "libvulkan.1.dylib",
         "libMoltenVK.dylib",
     };
