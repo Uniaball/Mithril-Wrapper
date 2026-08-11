@@ -8,26 +8,39 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ---- macOS: produce the deliverable libmithril.dylib --------------------
-  build-macos:
+  # ---- macOS + iOS: produce both deliverable libmithril dylibs -------------
+  build-macos-ios:
     runs-on: macos-26
+    strategy:
+      matrix:
+        include:
+          - name: macos
+            artifact: libmithril-macos-arm64
+            cmake_args: "-DCMAKE_BUILD_TYPE=Release"
+          - name: ios
+            artifact: libmithril-ios-arm64
+            cmake_args: "-DMITHRIL_IOS=ON -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 -DCMAKE_BUILD_TYPE=Release"
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Configure (macOS arm64 Release)
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Configure (${{ matrix.name }} arm64 Release)
+        run: cmake -S . -B build ${{ matrix.cmake_args }}
 
-      - name: Build
+      - name: Build (${{ matrix.name }})
         run: cmake --build build -j$(sysctl -n hw.ncpu)
 
+      # LIBRARY_OUTPUT_DIRECTORY is fixed to ./output for both platforms; the
+      # matrix instances run on separate runners with their own checkout, so
+      # renaming before upload just keeps the artifact name unambiguous.
       - name: Locate dylib
         id: locate
         run: |
           [ -f output/libmithril.dylib ] || (echo "dylib not found in output/" && exit 1)
-          echo "path=output/libmithril.dylib" >> "$GITHUB_OUTPUT"
-          file output/libmithril.dylib
+          mv output/libmithril.dylib "output/libmithril-${{ matrix.name }}.dylib"
+          echo "path=output/libmithril-${{ matrix.name }}.dylib" >> "$GITHUB_OUTPUT"
+          file "output/libmithril-${{ matrix.name }}.dylib"
 
       - name: Verify exported EGL symbols (contract set)
         run: |
@@ -63,14 +76,14 @@ jobs:
       - name: Upload dylib
         uses: actions/upload-artifact@v4
         with:
-          name: libmithril-macos-arm64
+          name: ${{ matrix.artifact }}
           path: ${{ steps.locate.outputs.path }}
           if-no-files-found: error
 
   # ---- macOS: boot the engine under MoltenVK (Metal swapchain path) -------
   test-macos-metal:
     runs-on: macos-26
-    needs: build-macos
+    needs: build-macos-ios
     steps:
       - uses: actions/checkout@v4
         with:
