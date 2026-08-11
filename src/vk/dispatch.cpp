@@ -33,6 +33,7 @@ void LoadDeviceFunctions() {
     LOAD_DEV(DestroyFence);
     LOAD_DEV(WaitForFences);
     LOAD_DEV(ResetFences);
+    LOAD_DEV(GetFenceStatus);
     LOAD_DEV(CreateRenderPass);
     LOAD_DEV(DestroyRenderPass);
     LOAD_DEV(CreateImageView);

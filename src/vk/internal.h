@@ -68,6 +68,7 @@ struct FnTable {
     ML_FN(DestroyFence);
     ML_FN(WaitForFences);
     ML_FN(ResetFences);
+    ML_FN(GetFenceStatus);
     ML_FN(CreateRenderPass);
     ML_FN(DestroyRenderPass);
     ML_FN(CreateImageView);

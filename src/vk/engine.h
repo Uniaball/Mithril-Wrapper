@@ -184,6 +184,20 @@ void SubmitFlush(bool wait);
 // memory, and before readback so results reflect the latest submission.
 void RetireAllInflight();
 
+// GL sync object (glFenceSync family, S6). A GLsync wraps one dedicated
+// VkFence that fires after every command recorded before the sync is created.
+// Pending (unsubmitted) frames are flushed first so the fence reflects them.
+// Returns 0 when the backend is unavailable => GL layer degrades to
+// always-signaled (MobileGL mode).
+uint64_t CreateGLSync();
+// True once the fence the sync owns has signaled (no flush, pure status read).
+bool CheckGLSync(uint64_t sync);
+// Block up to `timeout_ns` for the sync (UINT64_MAX waits forever).
+// Returns true when signaled in time.
+bool WaitGLSync(uint64_t sync, uint64_t timeout_ns);
+// Wait for completion, then release the fence (never free a GPU-in-use fence).
+void DestroyGLSync(uint64_t sync);
+
 // Copy a finished frame region (RGBA8, GL-style bottom-up origin) into `out`.
 void ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, void* out);
 

@@ -244,6 +244,55 @@ void RetireAllInflight() {
     for (uint32_t i = 0; i < kMaxFramesInFlight; ++i) RetireFrame(i);
 }
 
+void SubmitFlush(bool wait);   // defined below; CreateGLSync needs it
+
+// M6 stage C: GL sync objects. A GLsync wraps a dedicated VkFence submitted
+// as an empty batch, which the queue orders after every previously submitted
+// command batch - so the fence signals exactly when all GL work recorded
+// before glFenceSync has completed.
+uint64_t CreateGLSync() {
+    if (!EnsureInit()) return 0;
+    // The sync must cover commands the app already recorded but has not yet
+    // flushed (glFenceSync does not flush in GL, but our deferred recording
+    // only reaches the GPU through SubmitFlush, so kick the pending frame).
+    if (g.frame_dirty) SubmitFlush(false);
+
+    VkFenceCreateInfo fci{};
+    fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VkFence fence = VK_NULL_HANDLE;
+    if (g.fn.CreateFence(g.device, &fci, nullptr, &fence) != VK_SUCCESS) {
+        ML_LOG_ERROR("vk: glFenceSync CreateFence failed");
+        return 0;
+    }
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    if (g.fn.QueueSubmit(g.queue, 1, &si, fence) != VK_SUCCESS) {
+        ML_LOG_ERROR("vk: glFenceSync QueueSubmit failed");
+        g.fn.DestroyFence(g.device, fence, nullptr);
+        return 0;
+    }
+    return (uint64_t)fence;
+}
+
+bool CheckGLSync(uint64_t sync) {
+    if (!g.initialized || sync == 0) return true;   // degraded => already done
+    return g.fn.GetFenceStatus(g.device, (VkFence)sync) == VK_SUCCESS;
+}
+
+bool WaitGLSync(uint64_t sync, uint64_t timeout_ns) {
+    if (!g.initialized || sync == 0) return true;   // degraded => already done
+    VkFence fence = (VkFence)sync;
+    VkResult r = g.fn.WaitForFences(g.device, 1, &fence, VK_TRUE, timeout_ns);
+    return r == VK_SUCCESS;
+}
+
+void DestroyGLSync(uint64_t sync) {
+    if (!g.initialized || sync == 0) return;
+    VkFence fence = (VkFence)sync;
+    g.fn.WaitForFences(g.device, 1, &fence, VK_TRUE, UINT64_MAX);
+    g.fn.DestroyFence(g.device, fence, nullptr);
+}
+
 void SubmitFlush(bool wait) {
     if (!g.initialized) return;
 

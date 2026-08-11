@@ -108,6 +108,10 @@ MGL_IMPL = frozenset({
     "glGetFramebufferAttachmentParameteriv", "glGetRenderbufferParameteriv",
     "glIsFramebuffer", "glIsRenderbuffer",
     "glRenderbufferStorage", "glRenderbufferStorageMultisample",
+    "glDrawBuffer", "glDrawBuffers", "glReadBuffer",
+    # S6 sync objects (M6 stage C): GLsync wrapping a VkFence.
+    "glFenceSync", "glDeleteSync", "glIsSync", "glClientWaitSync",
+    "glWaitSync", "glGetSynciv",
 })
 
 

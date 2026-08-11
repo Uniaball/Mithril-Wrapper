@@ -2,7 +2,7 @@
 
 来源：MobileGL include/GL/glcorearb.h（Khronos 官方），GL_VERSION_1_0..3_3 累计。
 
-> 实现状态（M5 完成）：S1 51/55、S2 60/71、S3 76/114、S4 42/42、S5 24/24 已真实现（`src/gl/state.cpp`/`shader.cpp`/`vertex.cpp`/`draw.cpp`/`texture.cpp`/`fbo.cpp` + `src/shader/`（glsl/reflect/registry 三 TU）+ `src/vk/`（engine/dispatch/target/pipeline/fbo/draw 六 TU + texture）），合计 253 真导出；其余为 stub（返回 `GL_INVALID_OPERATION` + 日志）。M5 验收：`fbo_smoke`（state pipeline 17 断言 + FBO 纹理/RBO/blit + MRT 双附件回读/单 drawBuffer 门控 + MSAA 4x resolve，29 行 ok / 28 断言）；八冒烟（contract/state/shader/draw/texture/fbo/3d/render3d）回归未破坏。余 S6 同步/Query/Sampler 待启动。
+> 实现状态（M6 stage C 进行中）：S1 51/55、S2 60/71、S3 76/114、S4 42/42、S5 24/24、S6 sync 6/36 已真实现（`src/gl/state.cpp`/`shader.cpp`/`vertex.cpp`/`draw.cpp`/`texture.cpp`/`fbo.cpp`/`sync.cpp` + `src/shader/`（glsl/reflect/registry 三 TU）+ `src/vk/`（engine/dispatch/target/pipeline/fbo/draw 六 TU + texture）），合计 257 真导出；其余为 stub（返回 `GL_INVALID_OPERATION` + 日志）。M5 验收：`fbo_smoke`（state pipeline 17 断言 + FBO 纹理/RBO/blit + MRT 双附件回读/单 drawBuffer 门控 + MSAA 4x resolve，29 行 ok / 28 断言）。M6 stage C 验收：`sync_smoke`（S6 sync 六函数全链 + 降级/错误路径）。余 S6 Query/Sampler（30/36）、S3 剩余 38 个 stub 待启动。
 > S3 剩余 38 个 stub（无绘制影响）：TransformFeedback 系 5（Begin/End/GetVarying/BindBufferBase/Range）、glPointParameter* 4、整型属性 setter 系 20（glVertexAttribI1..I4 各变体）、打包 setter 系 8（glVertexAttribP*）、glVertexAttrib4Nub。
 
 ## S1 状态/使能/基础查询 — 55
@@ -85,13 +85,15 @@ glIsFramebuffer           glIsRenderbuffer          glReadBuffer              gl
 
 ## S6 同步/Query/Sampler — 36
 
+> ✅ sync 6/36（M6 stage C）真实现完成：`glFenceSync glDeleteSync glIsSync glClientWaitSync glWaitSync glGetSynciv`（src/gl/sync.cpp，GLsync 包装 VkFence；未提交帧先 flush；无后端降级按 MobileGL always-signaled 模式）；sync_smoke 通过。余 Query 系 14 + Sampler 系 14 + ConditionalRender 2 + TransformFeedback Varyings/索引缓冲 2 待启动。
+
 ```
-glBeginConditionalRender  glBeginQuery              glBindSampler             glClientWaitSync          glDeleteQueries           glDeleteSamplers        
-glDeleteSync              glEndConditionalRender    glEndQuery                glFenceSync               glGenQueries              glGenSamplers           
-glGetQueryObjecti64v      glGetQueryObjectiv        glGetQueryObjectui64v     glGetQueryObjectuiv       glGetQueryiv              glGetSamplerParameterIiv
-glGetSamplerParameterIuiv  glGetSamplerParameterfv   glGetSamplerParameteriv   glGetSynciv               glIsQuery                 glIsSampler             
-glIsSync                  glPrimitiveRestartIndex   glProvokingVertex         glQueryCounter            glSamplerParameterIiv     glSamplerParameterIuiv  
-glSamplerParameterf       glSamplerParameterfv      glSamplerParameteri       glSamplerParameteriv      glTransformFeedbackVaryings  glWaitSync              
+glBeginConditionalRender      glBeginQuery              glBindSampler             glClientWaitSync ✅         glDeleteQueries           glDeleteSamplers        
+glDeleteSync ✅               glEndConditionalRender    glEndQuery                glFenceSync ✅              glGenQueries              glGenSamplers           
+glGetQueryObjecti64v          glGetQueryObjectiv        glGetQueryObjectui64v     glGetQueryObjectuiv       glGetQueryiv              glGetSamplerParameterIiv
+glGetSamplerParameterIuiv     glGetSamplerParameterfv   glGetSamplerParameteriv   glGetSynciv ✅              glIsQuery                 glIsSampler             
+glIsSync ✅                   glPrimitiveRestartIndex   glProvokingVertex         glQueryCounter            glSamplerParameterIiv     glSamplerParameterIuiv  
+glSamplerParameterf           glSamplerParameterfv      glSamplerParameteri       glSamplerParameteriv      glTransformFeedbackVaryings   glWaitSync ✅              
 ```
 
 ## S7 其余 — 0
