@@ -2,12 +2,23 @@
 
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 
 namespace mithril {
 namespace util {
 
 namespace {
-int g_min_level = 2; // Info
+// Defaults to Info. MITHRIL_LOG_LEVEL overrides: 0=Error 1=Warn 2=Info
+// 3=Debug (set e.g. 3 in the launcher's environment to trace texture
+// uploads / shader compilation / draws on device).
+int g_min_level = [] {
+    if (const char* e = std::getenv("MITHRIL_LOG_LEVEL")) {
+        char* end = nullptr;
+        long v = std::strtol(e, &end, 10);
+        if (end != e && v >= 0 && v <= 3) return (int)v;
+    }
+    return 2;  // Info
+}();
 }
 
 void Log(LogLevel level, const char* fmt, ...) {
