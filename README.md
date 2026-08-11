@@ -35,6 +35,11 @@ GL → Vulkan → Metal（MoltenVK），无 OpenGL ES 参与。
   - `glPrimitiveRestartIndex`：GL 层改写 restart index→0xFFFFFFFF，DrawCommon v_count 跳过标记，pipeline `ia.primitiveRestartEnable` + key `|PR`。
   - `glProvokingVertex`：入 PipelineState key `|PV`，设备声明 VK_EXT_provoking_vertex 时启用 provokingVertexLast（LAST 与 GL 默认一致，无扩展时保持隐式行为）。
   - `tests/query_smoke.c` 60 断言全过（lavapipe：SAMPLES_PASSED=253888、深度遮挡 0/前置 1、TIME_ELAPSED/GL_TIMESTAMP 非零、restart 两独立三角 + 无 restart fan 覆盖、错误路径全套）。
+- **M6 stage E 完成（S6 Sampler 对象）**：
+  - `src/gl/sampler.cpp`：`glGenSamplers`/`glDeleteSamplers`/`glIsSampler`/`glBindSampler` + `glSamplerParameter{f,fv,i,iv,Iiv,Iuiv}` 6 函数 + `glGetSamplerParameter{fv,iv,Iiv,Iuiv}` 4 函数（共 14 函数；对象表 + 错误路径全套、参数往返）。
+  - 采样器状态与纹理解耦：GL sampler 对象经引擎常驻 `VkSampler` 表自拥采样器；引擎描述符绑定由 `(binding, tex_id)` 升级为 `(binding, sampler_id, tex_id)`（`src/vk/engine.h` 新增 `SamplerBind`）；绑定 sampler 对象时配对该 `VkSampler` 与纹理 image view，未绑定（`sampler_id==0`）时回退纹理自带 sampler（`glTexParameteri` 烘焙）。
+  - 引擎新增 API：`UpdateSampler(uint64_t, const TexSamplerInfo&)`/`DestroyResidentSampler(uint64_t)`/`GetResidentSampler(uint64_t)`。
+  - `tests/sampler_smoke.c` 全过（lavapipe：生命周期、bind 错误路径、参数往返、getter/setter 错误路径、绑定 sampler 对象渲染（NEAREST）vs 纹理回退、NEAREST/LINEAR 可观测差异、delete 解绑）。
 
 ## 快速构建（Linux 开发循环）
 
@@ -69,6 +74,8 @@ gcc -o tests/sync_smoke tests/sync_smoke.c -ldl -lm
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/sync_smoke     # M6 S6 GLsync 同步对象（需 lavapipe/loader）
 gcc -o tests/query_smoke tests/query_smoke.c -ldl
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/query_smoke   # M6 S6 查询对象 + primitive restart（需 lavapipe/loader）
+gcc -o tests/sampler_smoke tests/sampler_smoke.c -ldl
+LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/sampler_smoke # M6 S6 sampler 对象生命周期 + 绑定/回退渲染（需 lavapipe/loader）
 python3 scripts/ppm_render.py tests/render3d.ppm tests/render3d.png # PPM→PNG
 ```
 
@@ -88,5 +95,5 @@ src/shader  glslang GLSL→SPIR-V + SPIRV-Cross 反射（M2 完成）
 src/state   GL 状态引擎（Context 结构、错误队列、capability 表）
 src/vk      Vulkan 后端（dlsym 加载器、离屏渲染、动态 UBO 池、读回；engine/dispatch/target/swapchain/pipeline/fbo/draw 按域拆分）
 scripts/    gen_gl_stubs.py（stub 生成器）、exported_symbols.txt
-tests/      contract_smoke.c / state_smoke.c / shader_smoke.c / draw_smoke.c / texture_smoke.c / fbo_smoke.c / 3d_smoke.c / render3d_smoke.c / swapchain_smoke.c / sync_smoke.c / query_smoke.c
+tests/      contract_smoke.c / state_smoke.c / shader_smoke.c / draw_smoke.c / texture_smoke.c / fbo_smoke.c / 3d_smoke.c / render3d_smoke.c / swapchain_smoke.c / sync_smoke.c / query_smoke.c / sampler_smoke.c
 ```

@@ -445,6 +445,11 @@ struct Engine {
     std::unordered_map<uint64_t, TexObj> textures;
     TexObj dummy_tex;             // 1x1 white fallback for unbound units
 
+    // M6 stage E: GL sampler objects -> resident VkSampler. Sampler objects
+    // own their own VkSampler decoupled from any texture; the draw path pairs
+    // it with the bound texture's image view.
+    std::unordered_map<uint64_t, VkSampler> samplers;
+
     // Dynamic UBO via vkCmdBindDescriptorSets dynamic offsets; the backing
     // buffer is per-frame-slot since an in-flight frame may still be reading
     // its region. `ubo_align` is the dynamic-binding alignment.
@@ -528,6 +533,9 @@ VkImage FboDepthImage(const FboObj& f);
 // ---- texture helpers (defined in texture.cpp) ----------------------------
 
 TexObj* GetTexObj(uint64_t gl_id);
+
+// M6 stage E: sampler object's resident VkSampler (VK_NULL_HANDLE if none).
+VkSampler GetResidentSampler(uint64_t gl_id);
 
 // ---- pipeline helpers (defined in pipeline.cpp) --------------------------
 

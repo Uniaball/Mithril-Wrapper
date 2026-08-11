@@ -219,6 +219,7 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
     if (!v::EnsureInit()) { PUSH_ERROR(GL_INVALID_OPERATION); return; }
     // Replay texture uploads that happened before the backend came up.
     if (!g_dirty_textures.empty()) FlushDirtyTextureUploads();
+    if (!g_dirty_samplers.empty()) FlushDirtySamplerUploads();
     if (!CreateVProgram(prog)) { PUSH_ERROR(GL_INVALID_OPERATION); return; }
 
     const VAOData& vao = g_vaos[g_bound_vao];
@@ -327,8 +328,10 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
     dp.topology = (v::Topology)topo;
     dp.uniforms = ComposeUniforms(prog);
     dp.pipeline = BuildPipelineState();
-    // Resolve each sampler uniform to the texture bound at its GL unit
-    // (the framebelike value glUniform1i wrote; absent -> unit 0).
+    // Resolve each sampler uniform to the texture and sampler object bound
+    // at its GL unit (the value glUniform1i wrote; absent -> unit 0). A bound
+    // sampler object (g_sampler_units[unit] != 0) overrides the texture's own
+    // baked sampler; sampler_id == 0 falls back to the texture's sampler.
     dp.sampler_binds.clear();
     for (const auto& smp : prog->samplers) {
         GLint unit = 0;
@@ -336,9 +339,12 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
         if (uit != prog->uniform_by_location.end() &&
             !prog->uniforms[uit->second].value.empty())
             unit = (GLint)prog->uniforms[uit->second].value[0];
-        GLuint tex =
-            (unit >= 0 && (GLuint)unit < kMaxTexUnits) ? g_texture_units[unit] : 0;
-        dp.sampler_binds.push_back({smp.binding, tex});
+        GLuint tex = 0, smp_id = 0;
+        if (unit >= 0 && (GLuint)unit < kMaxTexUnits) {
+            tex = g_texture_units[unit];
+            smp_id = g_sampler_units[unit];
+        }
+        dp.sampler_binds.push_back({smp.binding, smp_id, tex});
     }
     if (!dp.vertex_stream.data.empty()) v::Draw(dp);
 }

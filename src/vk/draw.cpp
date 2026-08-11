@@ -174,21 +174,27 @@ void Draw(const DrawParams& params) {
     w.pBufferInfo = &dbi;
     writes.push_back(w);
 
-    // Combined image samplers: one per (binding, gl texture id) handed over
-    // by the GL layer; unbound units resolve to the 1x1 white dummy.
+    // Combined image samplers: one per (binding, sampler_id, tex_id) handed
+    // over by the GL layer. A bound sampler object (sampler_id != 0 with a
+    // resident VkSampler) overrides the texture's own baked sampler; absent
+    // one the draw falls back to tex->sampler (stage D behaviour). Unbound
+    // units resolve to the 1x1 white dummy.
     std::vector<VkDescriptorImageInfo> tis;
     for (const auto& sb : params.sampler_binds) {
-        TexObj* tex = GetTexObj(sb.second);
+        TexObj* tex = GetTexObj(sb.tex_id);
         if (!tex) continue;
+        VkSampler smp = sb.sampler_id ? GetResidentSampler(sb.sampler_id)
+                                      : VK_NULL_HANDLE;
+        if (smp == VK_NULL_HANDLE) smp = tex->sampler;   // fall back to texture's own
         VkDescriptorImageInfo di{};
-        di.sampler = tex->sampler;
+        di.sampler = smp;
         di.imageView = tex->view;
         di.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         tis.push_back(di);
         VkWriteDescriptorSet ws{};
         ws.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         ws.dstSet = op.desc_set;
-        ws.dstBinding = sb.first;
+        ws.dstBinding = sb.binding;
         ws.descriptorCount = 1;
         ws.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         ws.pImageInfo = &tis.back();

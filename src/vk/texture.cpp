@@ -29,6 +29,37 @@ VkSamplerAddressMode ToVkWrap(GLenum wrap) {
     }
 }
 
+// M6 stage E: shared VkSampler construction used by both the texture's baked
+// sampler (UploadTexture) and the sampler-object resident VkSampler
+// (UpdateSampler). `mips` is the mip count the sampler will be paired with;
+// sampler objects pass a generous upper bound (32) so the same VkSampler works
+// with any bound texture's mip chain.
+VkSampler CreateVkSampler(const TexSamplerInfo& sampler, uint32_t mips) {
+    VkSamplerCreateInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    si.magFilter = ToVkFilter(sampler.mag);
+    si.minFilter = ToVkFilter(sampler.min);
+    si.mipmapMode = sampler.mip ? VK_SAMPLER_MIPMAP_MODE_LINEAR
+                                : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    si.addressModeU = ToVkWrap(sampler.wrap_s);
+    si.addressModeV = ToVkWrap(sampler.wrap_t);
+    si.addressModeW = ToVkWrap(sampler.wrap_r);
+    si.mipLodBias = 0.0f;
+    si.anisotropyEnable = VK_FALSE;
+    si.maxAnisotropy = 1.0f;
+    si.compareEnable = VK_FALSE;
+    si.compareOp = VK_COMPARE_OP_ALWAYS;
+    si.minLod = 0.0f;
+    si.maxLod = mips > 0 ? static_cast<float>(mips - 1) : 0.0f;
+    si.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    VkSampler handle = VK_NULL_HANDLE;
+    if (g.fn.CreateSampler(g.device, &si, nullptr, &handle) != VK_SUCCESS) {
+        ML_LOG_WARN("vk: CreateSampler failed");
+        return VK_NULL_HANDLE;
+    }
+    return handle;
+}
+
 // One-shot staging copy: writable buffer -> image (all mip levels), then
 // leave the image in SHADER_READ_ONLY_OPTIMAL for sampling.
 void UploadImageData(VkImage image, const TexUpload& img) {
@@ -257,28 +288,12 @@ void UploadTexture(uint64_t gl_id, const TexUpload& img,
         return;
     }
 
-    VkSamplerCreateInfo si{};
-    si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    si.magFilter = ToVkFilter(sampler.mag);
-    si.minFilter = ToVkFilter(sampler.min);
-    si.mipmapMode = sampler.mip ? VK_SAMPLER_MIPMAP_MODE_LINEAR
-                                : VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    si.addressModeU = ToVkWrap(sampler.wrap_s);
-    si.addressModeV = ToVkWrap(sampler.wrap_t);
-    si.addressModeW = ToVkWrap(sampler.wrap_r);
-    si.mipLodBias = 0.0f;
-    si.anisotropyEnable = VK_FALSE;
-    si.maxAnisotropy = 1.0f;
-    si.compareEnable = VK_FALSE;
-    si.compareOp = VK_COMPARE_OP_ALWAYS;
-    si.minLod = 0.0f;
-    si.maxLod = static_cast<float>(mips - 1);
-    si.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-    if (g.fn.CreateSampler(g.device, &si, nullptr, &it->second.sampler) !=
-        VK_SUCCESS) {
+    VkSampler s = CreateVkSampler(sampler, mips);
+    if (s == VK_NULL_HANDLE) {
         ML_LOG_WARN("vk: sampler creation failed for texture %llu",
                     (unsigned long long)gl_id);
     }
+    it->second.sampler = s;
     it->second.levels = mips;
 }
 
@@ -313,6 +328,40 @@ TexObj* GetTexObj(uint64_t gl_id) {
     }
     auto it = g.textures.find(0);
     return it == g.textures.end() ? nullptr : &it->second;
+}
+
+// M6 stage E: GL sampler objects own a resident VkSampler decoupled from any
+// texture. UpdateSampler (re)creates it from the GL sampler state; the draw
+// path pairs it with the bound texture's image view. Sampler objects are not
+// tied to a specific texture's mip count, so a generous maxLod (mips=32 =>
+// 31.0f) is used so the same VkSampler works with any bound texture.
+void UpdateSampler(uint64_t gl_id, const TexSamplerInfo& sampler) {
+    if (!g.initialized) return;
+    RetireAllInflight();
+    auto it = g.samplers.find(gl_id);
+    if (it != g.samplers.end() && it->second != VK_NULL_HANDLE)
+        g.fn.DestroySampler(g.device, it->second, nullptr);
+    VkSampler s = CreateVkSampler(sampler, 32);
+    if (s != VK_NULL_HANDLE)
+        g.samplers[gl_id] = s;
+    else
+        g.samplers.erase(gl_id);
+}
+
+void DestroyResidentSampler(uint64_t gl_id) {
+    if (!g.initialized) return;
+    RetireAllInflight();
+    auto it = g.samplers.find(gl_id);
+    if (it != g.samplers.end()) {
+        if (it->second != VK_NULL_HANDLE)
+            g.fn.DestroySampler(g.device, it->second, nullptr);
+        g.samplers.erase(it);
+    }
+}
+
+VkSampler GetResidentSampler(uint64_t gl_id) {
+    auto it = g.samplers.find(gl_id);
+    return it != g.samplers.end() ? it->second : VK_NULL_HANDLE;
 }
 
 } // namespace mithril::vk

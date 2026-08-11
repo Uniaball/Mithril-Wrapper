@@ -118,6 +118,14 @@ MGL_IMPL = frozenset({
     "glGetQueryiv", "glGetQueryObjectiv", "glGetQueryObjectuiv",
     "glGetQueryObjecti64v", "glGetQueryObjectui64v", "glQueryCounter",
     "glPrimitiveRestartIndex", "glProvokingVertex",
+    # S6 sampler objects (M6 stage E): glGenSamplers..glGetSamplerParameter family
+    # (src/gl/sampler.cpp). Sampler state decoupled from texture; engine
+    # descriptor binding carries (binding, sampler_id, tex_id).
+    "glGenSamplers", "glDeleteSamplers", "glIsSampler", "glBindSampler",
+    "glSamplerParameterf", "glSamplerParameterfv", "glSamplerParameteri",
+    "glSamplerParameteriv", "glSamplerParameterIiv", "glSamplerParameterIuiv",
+    "glGetSamplerParameterfv", "glGetSamplerParameteriv",
+    "glGetSamplerParameterIiv", "glGetSamplerParameterIuiv",
 })
 
 

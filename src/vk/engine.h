@@ -101,10 +101,21 @@ struct PipelineState {
     GLenum provoking_vertex = GL_LAST_VERTEX_CONVENTION;
 };
 
+// One sampler-uniform assignment for a draw: Vulkan descriptor binding,
+// the GL sampler object bound at that unit (0 = none, fall back to the
+// texture's own baked VkSampler), and the GL texture bound at that unit.
+struct SamplerBind {
+    uint32_t binding = 0;
+    uint64_t sampler_id = 0;   // GL sampler object id (0 = use texture's sampler)
+    uint64_t tex_id = 0;       // GL texture id (0 = unbound -> 1x1 white dummy)
+};
+
 // Everything one GL draw call needs. `uniforms` maps mithril_GlobalBlock
 // member name -> flat float values. `sampler_binds` holds the active
 // sampler assignments for this program: Vulkan descriptor binding ->
-// GL texture id (0 = nothing bound, resolved to a 1x1 white fallback).
+// (sampler object id, texture id). sampler_id == 0 falls back to the
+// texture's own baked VkSampler; tex_id == 0 resolves to the 1x1 white
+// dummy.
 struct DrawParams {
     uint64_t program = 0;
     VertexStream vertex_stream;                    // binding 0 (per-vertex)
@@ -113,7 +124,7 @@ struct DrawParams {
     uint32_t instance_count = 1;
     Topology topology = Topology::Triangles;
     std::unordered_map<std::string, std::vector<float>> uniforms;
-    std::vector<std::pair<uint32_t, uint64_t>> sampler_binds; // (binding, gl id)
+    std::vector<SamplerBind> sampler_binds;
     PipelineState pipeline;                        // M5 depth/blend/cull/... state
 };
 
@@ -149,6 +160,13 @@ void UploadTexture(uint64_t gl_id, const TexUpload& img,
 // Drop the resident GPU image of `gl_id` (glDeleteTextures path). The next
 // UploadTexture rebuilds it from scratch.
 void DestroyResidentTexture(uint64_t gl_id);
+
+// M6 stage E: GL sampler objects (glGenSamplers / glBindSampler). A sampler
+// object owns its own VkSampler, decoupled from any texture; the draw path
+// pairs it with the bound texture's image view. UpdateSampler (re)creates the
+// resident VkSampler from GL sampler state; DestroyResidentSampler frees it.
+void UpdateSampler(uint64_t gl_id, const TexSamplerInfo& sampler);
+void DestroyResidentSampler(uint64_t gl_id);
 
 // Lazily create loader + instance + device + offscreen target. Idempotent.
 bool EnsureInit();

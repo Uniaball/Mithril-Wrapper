@@ -121,6 +121,17 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "QUERY SMOKE ALL PASSED"
 
+      - name: Run S6 sampler object smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          clang -o tests/sampler_smoke tests/sampler_smoke.c -ldl
+          output=$(./tests/sampler_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "SAMPLER SMOKE ALL PASSED"
+
   # ---- Linux: run the contract + state machine smoke tests ----------------
   test-linux:
     runs-on: ubuntu-latest
@@ -154,6 +165,7 @@ jobs:
           gcc -o tests/multiframe_smoke tests/multiframe_smoke.c -ldl -lm
           gcc -o tests/sync_smoke tests/sync_smoke.c -ldl -lm
           gcc -o tests/query_smoke tests/query_smoke.c -ldl
+          gcc -o tests/sampler_smoke tests/sampler_smoke.c -ldl
           gcc -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl
 
       - name: Run EGL contract smoke
@@ -221,6 +233,12 @@ jobs:
           output=$(./tests/query_smoke)
           echo "$output"
           echo "$output" | grep -q "QUERY SMOKE ALL PASSED"
+
+      - name: Run S6 sampler object smoke (lavapipe)
+        run: |
+          output=$(./tests/sampler_smoke)
+          echo "$output"
+          echo "$output" | grep -q "SAMPLER SMOKE ALL PASSED"
 
       - name: Run swapchain surface smoke (offscreen on lavapipe)
         run: |

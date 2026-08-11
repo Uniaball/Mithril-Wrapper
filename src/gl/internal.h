@@ -121,6 +121,22 @@ extern GLuint g_next_texture;
 extern std::unordered_set<GLuint> g_dirty_textures;
 void FlushDirtyTextureUploads();   // defined in texture.cpp
 
+// ---- shared sampler state (sampler.cpp owns the storage) ------------------
+
+// CPU-side image of one GL sampler object (M6 stage E). Fields mirror the
+// sampler subset of TexState so the same TexSamplerInfo projection works.
+struct SamplerState {
+    GLenum min_filter = GL_LINEAR;
+    GLenum mag_filter = GL_LINEAR;
+    GLenum wrap_s = GL_REPEAT, wrap_t = GL_REPEAT, wrap_r = GL_REPEAT;
+};
+
+extern std::unordered_map<GLuint, SamplerState> g_samplers;
+extern std::array<GLuint, kMaxTexUnits> g_sampler_units;  // unit -> sampler id (0 = none)
+extern GLuint g_next_sampler;
+extern std::unordered_set<GLuint> g_dirty_samplers;
+void FlushDirtySamplerUploads();   // defined in sampler.cpp
+
 // ---- draw-time attribute fetch helpers (defined in draw.cpp) ------------
 
 // IEEE 754 half (binary16) -> float.
