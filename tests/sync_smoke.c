@@ -142,11 +142,11 @@ int main(void) {
           "main STATUS signaled after wait");
 
     // The wait drained the pending frame; the readback reflects it.
-    // (Clear colour 0.9 -> 229.5, so the blue channel may round to 229 or
-    // 230 depending on the driver; compare with tolerance.)
+    // (Clear colour 0.2/0.3/0.9 -> 51/76.5/229.5, so channels may round
+    // either way depending on the driver's float->int conversion.)
     unsigned char px[4];
     glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    CHECK(px[0] == 51 && px[1] == 76 &&
+    CHECK(px[0] == 51 && (px[1] == 76 || px[1] == 77) &&
               (px[2] == 229 || px[2] == 230),
           "readback matches frame covered by fence (%d,%d,%d)",
           px[0], px[1], px[2]);
