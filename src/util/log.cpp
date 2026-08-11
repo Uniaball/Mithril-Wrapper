@@ -8,16 +8,17 @@ namespace mithril {
 namespace util {
 
 namespace {
-// Defaults to Info. MITHRIL_LOG_LEVEL overrides: 0=Error 1=Warn 2=Info
-// 3=Debug (set e.g. 3 in the launcher's environment to trace texture
-// uploads / shader compilation / draws on device).
+// Defaults to Debug so [MR-DBG ] traces (texture uploads / shader
+// compilation / draws) are emitted on device without requiring a launcher
+// environment override. MITHRIL_LOG_LEVEL still selects the floor when set:
+// 0=Error 1=Warn 2=Info 3=Debug.
 int g_min_level = [] {
     if (const char* e = std::getenv("MITHRIL_LOG_LEVEL")) {
         char* end = nullptr;
         long v = std::strtol(e, &end, 10);
         if (end != e && v >= 0 && v <= 3) return (int)v;
     }
-    return 2;  // Info
+    return 3;  // Debug
 }();
 }
 
