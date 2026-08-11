@@ -140,7 +140,12 @@ static const char* FS =
 
 int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);   /* CI crash logs keep every CHECK row */
-    void* h = dlopen("./output/libmithril.so", RTLD_NOW | RTLD_GLOBAL);
+#ifdef __APPLE__
+    const char* libpath = "./output/libmithril.dylib";
+#else
+    const char* libpath = "./output/libmithril.so";
+#endif
+    void* h = dlopen(libpath, RTLD_NOW | RTLD_GLOBAL);
     if (!h) { printf("dlopen: %s\n", dlerror()); return 2; }
 
     fn_glClearColor        clearColor   = (fn_glClearColor)dlsym(h, "glClearColor");
