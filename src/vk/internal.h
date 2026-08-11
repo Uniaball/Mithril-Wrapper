@@ -263,6 +263,15 @@ struct DrawOp {
 // it is reused two submissions later or when a synchronous read needs the
 // result. `g.cmd`/`g.fence` remain a separate auxiliary one-shot path for
 // texture uploads / blits, which are always synchronous.
+// M6 stage C: GL sync objects. Each live GLsync owns one dedicated
+// command buffer + fence; the empty batch is ordered after every
+// previously submitted command batch so the fence signals exactly when
+// all GL work recorded before glFenceSync completed.
+struct GLSyncObj {
+    VkFence fence = VK_NULL_HANDLE;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+};
+
 constexpr uint32_t kMaxFramesInFlight = 2;
 
 struct FrameSlot {
@@ -326,6 +335,10 @@ struct Engine {
     // M6 stage A: double-buffered frame slots (draw path).
     FrameSlot frames[kMaxFramesInFlight];
     uint32_t frame_index = 0;   // slot the next SubmitFlush records/submits
+
+    // M6 stage C: live GLsync objects (handle -> object).
+    std::unordered_map<uint64_t, GLSyncObj> glsyncs;
+    uint64_t glsync_next = 1;   // handles start at 1 (0 = degraded)
 
     // S5: FBO/renderbuffer tables + current draw/read framebuffer bindings.
     std::unordered_map<uint64_t, RbObj> renderbuffers;

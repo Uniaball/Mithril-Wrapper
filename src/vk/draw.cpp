@@ -247,9 +247,12 @@ void RetireAllInflight() {
 void SubmitFlush(bool wait);   // defined below; CreateGLSync needs it
 
 // M6 stage C: GL sync objects. A GLsync wraps a dedicated VkFence submitted
-// as an empty batch, which the queue orders after every previously submitted
-// command batch - so the fence signals exactly when all GL work recorded
-// before glFenceSync has completed.
+// with a real (empty) command buffer, which the queue orders after every
+// previously submitted command batch - so the fence signals exactly when all
+// GL work recorded before glFenceSync has completed. A plain empty
+// VkSubmitInfo (0 command buffers) is avoided: lavapipe signals it instantly,
+// but MoltenVK only advances fences when a submitted MTLCommandBuffer
+// completes, so an empty-batch fence would never fire on Metal.
 uint64_t CreateGLSync() {
     if (!EnsureInit()) return 0;
     // The sync must cover commands the app already recorded but has not yet
@@ -257,40 +260,70 @@ uint64_t CreateGLSync() {
     // only reaches the GPU through SubmitFlush, so kick the pending frame).
     if (g.frame_dirty) SubmitFlush(false);
 
+    VkCommandBufferAllocateInfo cbai{};
+    cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cbai.commandPool = g.pool;
+    cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cbai.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (g.fn.AllocateCommandBuffers(g.device, &cbai, &cmd) != VK_SUCCESS) {
+        ML_LOG_ERROR("vk: glFenceSync command buffer alloc failed");
+        return 0;
+    }
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (g.fn.BeginCommandBuffer(cmd, &bi) != VK_SUCCESS ||
+        g.fn.EndCommandBuffer(cmd) != VK_SUCCESS) {
+        g.fn.FreeCommandBuffers(g.device, g.pool, 1, &cmd);
+        return 0;
+    }
+
+    VkFence fence = VK_NULL_HANDLE;
     VkFenceCreateInfo fci{};
     fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    VkFence fence = VK_NULL_HANDLE;
     if (g.fn.CreateFence(g.device, &fci, nullptr, &fence) != VK_SUCCESS) {
+        g.fn.FreeCommandBuffers(g.device, g.pool, 1, &cmd);
         ML_LOG_ERROR("vk: glFenceSync CreateFence failed");
         return 0;
     }
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd;
     if (g.fn.QueueSubmit(g.queue, 1, &si, fence) != VK_SUCCESS) {
-        ML_LOG_ERROR("vk: glFenceSync QueueSubmit failed");
         g.fn.DestroyFence(g.device, fence, nullptr);
+        g.fn.FreeCommandBuffers(g.device, g.pool, 1, &cmd);
+        ML_LOG_ERROR("vk: glFenceSync QueueSubmit failed");
         return 0;
     }
-    return (uint64_t)fence;
+    uint64_t handle = g.glsync_next++;
+    g.glsyncs[handle] = {fence, cmd};
+    return handle;
 }
 
 bool CheckGLSync(uint64_t sync) {
-    if (!g.initialized || sync == 0) return true;   // degraded => already done
-    return g.fn.GetFenceStatus(g.device, (VkFence)sync) == VK_SUCCESS;
+    auto it = g.glsyncs.find(sync);
+    if (it == g.glsyncs.end()) return true;   // degraded => already done
+    return g.fn.GetFenceStatus(g.device, it->second.fence) == VK_SUCCESS;
 }
 
 bool WaitGLSync(uint64_t sync, uint64_t timeout_ns) {
-    if (!g.initialized || sync == 0) return true;   // degraded => already done
-    VkFence fence = (VkFence)sync;
+    auto it = g.glsyncs.find(sync);
+    if (it == g.glsyncs.end()) return true;   // degraded => already done
+    VkFence fence = it->second.fence;
     VkResult r = g.fn.WaitForFences(g.device, 1, &fence, VK_TRUE, timeout_ns);
     return r == VK_SUCCESS;
 }
 
 void DestroyGLSync(uint64_t sync) {
-    if (!g.initialized || sync == 0) return;
-    VkFence fence = (VkFence)sync;
+    auto it = g.glsyncs.find(sync);
+    if (it == g.glsyncs.end()) return;
+    VkFence fence = it->second.fence;
     g.fn.WaitForFences(g.device, 1, &fence, VK_TRUE, UINT64_MAX);
     g.fn.DestroyFence(g.device, fence, nullptr);
+    g.fn.FreeCommandBuffers(g.device, g.pool, 1, &it->second.cmd);
+    g.glsyncs.erase(it);
 }
 
 void SubmitFlush(bool wait) {
