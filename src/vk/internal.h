@@ -372,7 +372,8 @@ struct Swapchain {
     VkExtent2D extent{};
     std::vector<VkImage> images;
     std::vector<VkImageView> views;
-    VkSemaphore acquire_sem = VK_NULL_HANDLE;
+    VkSemaphore acquire_sem = VK_NULL_HANDLE;   // unused (fence path); kept for ABI
+    VkFence acquire_fence = VK_NULL_HANDLE;      // acquire sync (replaces semaphore)
     std::vector<VkSemaphore> render_finished;
     uint32_t acquire_index = 0;
     bool acquire_valid = false;

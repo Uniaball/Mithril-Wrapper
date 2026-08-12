@@ -164,6 +164,13 @@ static bool EnsureSwapchain() {
     VkSemaphoreCreateInfo semi{};
     semi.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     g.fn.CreateSemaphore(g.device, &semi, nullptr, &g.swap.acquire_sem);
+    VkFenceCreateInfo fci{};
+    fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    if (g.fn.CreateFence(g.device, &fci, nullptr, &g.swap.acquire_fence) !=
+        VK_SUCCESS) {
+        ML_LOG_ERROR("vk: swapchain acquire fence creation failed");
+        return false;
+    }
     g.swap.render_finished.resize(g.swap.images.size());
     for (auto& s : g.swap.render_finished)
         g.fn.CreateSemaphore(g.device, &semi, nullptr, &s);
@@ -185,6 +192,10 @@ static void DestroySwapchain() {
     if (g.swap.acquire_sem) {
         g.fn.DestroySemaphore(g.device, g.swap.acquire_sem, nullptr);
         g.swap.acquire_sem = VK_NULL_HANDLE;
+    }
+    if (g.swap.acquire_fence) {
+        g.fn.DestroyFence(g.device, g.swap.acquire_fence, nullptr);
+        g.swap.acquire_fence = VK_NULL_HANDLE;
     }
     for (auto s : g.swap.render_finished)
         g.fn.DestroySemaphore(g.device, s, nullptr);
@@ -246,19 +257,32 @@ bool Present() {
 
     RetireAllInflight();
 
-    // Acquire the next image. In-flight image reuse is guarded by the
-    // per-image render-finished semaphore being waited at present.
+    // Acquire the next image. The acquire is signalled via a fence rather
+    // than a semaphore so the same sync object can be safely waited + reset
+    // between frames; reusing a semaphore that MoltenVK has not yet observed
+    // as signalled (or that the previous frame's QueueSubmit is still waiting
+    // on) provokes VK_ERROR_OUT_OF_DATE_KHR / VK_ERROR_SURFACE_LOST_KHR,
+    // which Present() read as a broken swapchain and rebuilt on every frame
+    // without ever presenting.
+    if (g.swap.acquire_valid) {
+        g.fn.WaitForFences(g.device, 1, &g.swap.acquire_fence, VK_TRUE,
+                           UINT64_MAX);
+        g.fn.ResetFences(g.device, 1, &g.swap.acquire_fence);
+    }
     VkResult ar = g.fn.AcquireNextImageKHR(
-        g.device, g.swap.handle, UINT64_MAX, g.swap.acquire_sem,
-        VK_NULL_HANDLE, &g.swap.acquire_index);
+        g.device, g.swap.handle, UINT64_MAX, VK_NULL_HANDLE,
+        g.swap.acquire_fence, &g.swap.acquire_index);
     if (ar == VK_ERROR_OUT_OF_DATE_KHR || ar == VK_SUBOPTIMAL_KHR) {
         DestroySwapchain();
         if (!EnsureSwapchain()) return false;
         ar = g.fn.AcquireNextImageKHR(g.device, g.swap.handle, UINT64_MAX,
-                                      g.swap.acquire_sem, VK_NULL_HANDLE,
+                                      VK_NULL_HANDLE, g.swap.acquire_fence,
                                       &g.swap.acquire_index);
     }
-    if (ar != VK_SUCCESS) return false;
+    if (ar != VK_SUCCESS && ar != VK_SUBOPTIMAL_KHR) return false;
+    g.fn.WaitForFences(g.device, 1, &g.swap.acquire_fence, VK_TRUE,
+                       UINT64_MAX);
+    g.fn.ResetFences(g.device, 1, &g.swap.acquire_fence);
     g.swap.acquire_valid = true;
     const uint32_t idx = g.swap.acquire_index;
 
@@ -307,9 +331,15 @@ bool Present() {
     blit.dstOffsets[0] = {0, 0, 0};
     blit.dstOffsets[1] = {(int32_t)g.swap.extent.width,
                           (int32_t)g.swap.extent.height, 1};
+    // NEAREST: the spec only permits cross-format blits with NEAREST (VUID-
+    // vkCmdBlitImage-srcImage-00229). The offscreen target is R8G8B8A8_UNORM
+    // while MoltenVK's CAMetalLayer surface commonly forces B8G8R8A8_UNORM,
+    // so FILTER_LINEAR would be invalid. At 1:1 extent NEAREST is visually
+    // identical; on size mismatch it is pixelated but correct (no R/B swap:
+    // MoltenVK handles the channel mapping in the blit).
     g.fn.CmdBlitImage(g.cmd, g.target_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                       g.swap.images[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-                      &blit, VK_FILTER_LINEAR);
+                      &blit, VK_FILTER_NEAREST);
 
     // swapchain: TRANSFER_DST -> PRESENT_SRC
     VkImageMemoryBarrier ps_bar{dst_bar};
@@ -334,12 +364,11 @@ bool Present() {
 
     g.fn.EndCommandBuffer(g.cmd);
 
-    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    // No acquire semaphore to wait on -- acquire was fenced above and the
+    // image is already available. Signal render_finished[idx] so the
+    // present waits on the blit completion.
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.waitSemaphoreCount = 1;
-    si.pWaitSemaphores = &g.swap.acquire_sem;
-    si.pWaitDstStageMask = &wait_stage;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &g.cmd;
     si.signalSemaphoreCount = 1;
