@@ -204,6 +204,20 @@ void SetNativeLayer(void* layer) {
     if (layer && !IsCametalLayer(layer)) {
         g.native_layer = nullptr;
         ML_LOG_WARN("vk: native window is not a CAMetalLayer; staying offscreen");
+    } else if (layer) {
+        // CAMetalLayer's default pixel format is BGRA8Unorm, so the surface
+        // exposes only B8G8R8A8 swapchain formats while the offscreen target
+        // is fixed at R8G8B8A8_UNORM. vkCmdBlitImage with FILTER_LINEAR
+        // requires identical src/dst formats (VUID-vkCmdBlitImage-srcImage-
+        // 00229), so a BGRA swapchain either violates the spec or (via NEAREST
+        // on the same format class) swaps R/B on screen. Pin the layer to
+        // MTLPixelFormatRGBA8Unorm (== 70) so the surface advertises the
+        // R8G8B8A8_UNORM family and both blit endpoints match. Sent through
+        // the objc runtime to avoid a compile-time Metal framework dependency.
+        typedef void (*SetPixelFormatFn)(id, SEL, uint64_t);
+        ((SetPixelFormatFn)objc_msgSend)((id)layer,
+                                         sel_registerName("setPixelFormat:"),
+                                         (uint64_t)70 /* MTLPixelFormatRGBA8Unorm */);
     }
 #endif
 }

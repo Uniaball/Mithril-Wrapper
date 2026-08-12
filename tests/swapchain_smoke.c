@@ -52,6 +52,11 @@ typedef int   (*eglBindAPI_fn)(int);
 #include <objc/message.h>
 #include <objc/runtime.h>
 
+// setDrawableSize: takes a CGSize, which is {double,double}. Declared with a
+// distinct name so the test compiles without pulling in CoreGraphics headers
+// (objc_msgSend only cares about the ABI layout, which matches CGSize).
+struct DrawableSize { double width, height; };
+
 // Create a real CAMetalLayer via the objc runtime so the Apple build drives
 // the full VK_EXT_metal_surface + swapchain path under the MoltenVK ICD.
 static void* MakeMetalLayer(void) {
@@ -59,7 +64,15 @@ static void* MakeMetalLayer(void) {
     if (!layerClass) return (void*)0x1;
     typedef id (*NewFn)(id, SEL);
     NewFn alloc = (NewFn)&objc_msgSend;
-    return (void*)alloc((id)layerClass, sel_registerName("new"));
+    id layer = alloc((id)layerClass, sel_registerName("new"));
+    // A layer with no drawableSize has no drawables: MoltenVK's
+    // AcquireNextImageKHR then returns VK_ERROR_OUT_OF_DATE_KHR forever and
+    // Present() rebuilds the swapchain on every frame while never presenting.
+    // Give it a real size so acquire->blit->present actually completes.
+    typedef void (*SetDrawableFn)(id, SEL, struct DrawableSize);
+    ((SetDrawableFn)&objc_msgSend)(layer, sel_registerName("setDrawableSize:"),
+                                   (struct DrawableSize){512, 512});
+    return layer;
 }
 #endif
 
