@@ -145,6 +145,108 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "SAMPLER SMOKE ALL PASSED"
 
+      - name: Build remaining smoke test binaries
+        run: |
+          clang -o tests/contract_smoke   tests/contract_smoke.c   -ldl
+          clang -o tests/state_smoke      tests/state_smoke.c      -ldl
+          clang -o tests/shader_smoke     tests/shader_smoke.c     -ldl
+          clang -o tests/draw_smoke       tests/draw_smoke.c       -ldl
+          clang -o tests/texture_smoke    tests/texture_smoke.c    -ldl
+          clang -o tests/fbo_smoke        tests/fbo_smoke.c        -ldl
+          clang -o tests/3d_smoke         tests/3d_smoke.c         -ldl -lm
+          clang -o tests/render3d_smoke   tests/render3d_smoke.c   -ldl -lm
+          clang -o tests/multiframe_smoke tests/multiframe_smoke.c -ldl -lm
+
+      - name: Run EGL contract smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/contract_smoke)
+          echo "$output"
+          echo "$output" | grep -q "ALL CONTRACT CHECKS PASSED"
+
+      - name: Run GL state machine smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/state_smoke)
+          echo "$output"
+          echo "$output" | grep -q "STATE SMOKE ALL PASSED"
+
+      - name: Run shader pipeline smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/shader_smoke)
+          echo "$output"
+          echo "$output" | grep -q "SHADER SMOKE ALL PASSED"
+
+      - name: Run GL->Vulkan draw smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/draw_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "DRAW SMOKE ALL PASSED"
+
+      - name: Run GL->Vulkan texture smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/texture_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "TEXTURE SMOKE ALL PASSED"
+
+      - name: Run GL->Vulkan state-pipeline smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/fbo_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "FBO SMOKE ALL PASSED"
+
+      - name: Run 3D depth/perspective smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/3d_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "3D SMOKE"
+
+      - name: Run 3D scene render smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/render3d_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "RENDER SMOKE"
+
+      - name: Run multiframe ring smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/multiframe_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "MULTIFRAME SMOKE ALL PASSED"
+
   # ---- Linux: run the contract + state machine smoke tests ----------------
   test-linux:
     runs-on: ubuntu-latest

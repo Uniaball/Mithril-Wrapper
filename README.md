@@ -87,6 +87,11 @@ python3 scripts/ppm_render.py tests/render3d.ppm tests/render3d.png # PPM→PNG
 
 > 本开发容器 ldd 找不到 libstdc++/libm/libgcc_s，运行 .so 相关程序需
 > 显式 `LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu`。
+>
+> **CI 覆盖：上述 13 个冒烟在 Linux（lavapipe）与 macOS（MoltenVK 真 Metal）
+> 双跑**（test-linux + test-macos-metal），swapchain 在 macOS 走真
+> CAMetalLayer→present；macOS 侧测试二进制用 `__APPLE__` 分支加载
+> `output/libmithril.dylib`。
 
 ## 契约文档
 - `CHECKLIST.md` — 桥接契约（Amethyst GL bridge 硬性要求）+ 里程碑规划 + 架构

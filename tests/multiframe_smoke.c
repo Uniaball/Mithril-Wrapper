@@ -98,7 +98,12 @@ static const char* FS =
     "}\n";
 
 int main(void) {
-    g_gl = dlopen("./output/libmithril.so", RTLD_NOW);
+#if defined(__APPLE__)
+    const char* libpath = "./output/libmithril.dylib";
+#else
+    const char* libpath = "./output/libmithril.so";
+#endif
+    g_gl = dlopen(libpath, RTLD_NOW);
     if (!g_gl) {
         printf("dlopen failed\n");
         return 1;

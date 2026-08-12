@@ -174,7 +174,12 @@ static void BuildCube(float s, float cx, float cy, float cz, float (*v)[7]) {
 }
 
 int main(void) {
-    void* h = dlopen("./output/libmithril.so", RTLD_NOW | RTLD_GLOBAL);
+#if defined(__APPLE__)
+    const char* libpath = "./output/libmithril.dylib";
+#else
+    const char* libpath = "./output/libmithril.so";
+#endif
+    void* h = dlopen(libpath, RTLD_NOW | RTLD_GLOBAL);
     if (!h) { fprintf(stderr, "dlopen: %s\n", dlerror()); return 2; }
 
     fn_glCreateShader cs = (fn_glCreateShader)dlsym(h, "glCreateShader");

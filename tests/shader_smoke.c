@@ -63,7 +63,12 @@ int fails = 0;
 } while (0)
 
 int main(void) {
-    void* h = dlopen("./output/libmithril.so", RTLD_NOW | RTLD_GLOBAL);
+#if defined(__APPLE__)
+    const char* libpath = "./output/libmithril.dylib";
+#else
+    const char* libpath = "./output/libmithril.so";
+#endif
+    void* h = dlopen(libpath, RTLD_NOW | RTLD_GLOBAL);
     if (!h) { printf("dlopen: %s\n", dlerror()); return 2; }
 
     glCreateShader_fn        createShader  = (glCreateShader_fn)dlsym(h, "glCreateShader");
