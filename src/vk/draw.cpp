@@ -94,7 +94,7 @@ void Draw(const DrawParams& params) {
         StateSignature(params.pipeline);
     op.pipeline_key = base_key + "|RP" + (op.rp_sig.empty() ? "default" : op.rp_sig);
 
-    if (!StageStream(params.vertex_stream, &op.vertex_buffer,
+if (!StageStream(params.vertex_stream, &op.vertex_buffer,
                      &op.vertex_mem))
         return;
     if (!op.i_attrs.empty() &&
@@ -436,10 +436,15 @@ void SubmitFlush(bool wait) {
                                         &c, 1, &color_range);
             };
             if (!fbo) {
-                clear_img(color_img, *color_layout);
+                if (g.clear_attachment <= 0)
+                    clear_img(color_img, *color_layout);
             } else {
                 for (size_t i = 0; i < fbo->colors.size(); ++i) {
                     if (!(OpDrawBufEnabled(*fbo, i))) continue;
+                    // glClearBufferfv(GL_COLOR, i, ..) targets one attachment.
+                    if (g.clear_attachment >= 0 &&
+                        (int)i != g.clear_attachment)
+                        continue;
                     clear_img(FboColorImage(*fbo, (int)i),
                               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                     if (fbo->color_msaa[i])

@@ -120,7 +120,115 @@ void APIENTRY glClear(GLbitfield mask) {
                      st.clear_color[3]);
     v::SetClearDepth(st.clear_depth);
     v::SetClearStencil(st.clear_stencil);
+    v::SetClearAttachment(-1);
     v::SetClearMask(mask);
+}
+
+// ---- glClearBuffer* (per-attachment clears, GL 3.3) -----------------------
+
+// glClearBuffer* replaces the pending clear wholesale (glClear semantics):
+// the specified buffer(s) are cleared to the given value and the previously
+// pending clear is discarded. Drawbuffer is validated against the number of
+// color attachments / 0 for depth/stencil (GL 3.3 core rules).
+
+void APIENTRY glClearBufferfv(GLenum buffer, GLint drawbuffer, const GLfloat* value) {
+    if (!value) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    auto& st = s::GetState();
+    switch (buffer) {
+        case GL_COLOR: {
+            if (drawbuffer < 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            st.clear_color[0] = value[0]; st.clear_color[1] = value[1];
+            st.clear_color[2] = value[2]; st.clear_color[3] = value[3];
+            v::EnsureInit();
+            v::SetClearColor(value[0], value[1], value[2], value[3]);
+            v::SetClearAttachment(drawbuffer);
+            v::SetClearMask(GL_COLOR_BUFFER_BIT);
+            return;
+        }
+        case GL_DEPTH:
+            if (drawbuffer != 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            st.clear_depth = value[0];
+            v::EnsureInit();
+            v::SetClearDepth(value[0]);
+            v::SetClearAttachment(-1);
+            v::SetClearMask(GL_DEPTH_BUFFER_BIT);
+            return;
+        case GL_STENCIL:
+            if (drawbuffer != 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            st.clear_stencil = (GLint)value[0];
+            v::EnsureInit();
+            v::SetClearStencil((GLint)value[0]);
+            v::SetClearAttachment(-1);
+            v::SetClearMask(GL_STENCIL_BUFFER_BIT);
+            return;
+        default:
+            PUSH_ERROR(GL_INVALID_ENUM);
+    }
+}
+
+void APIENTRY glClearBufferiv(GLenum buffer, GLint drawbuffer, const GLint* value) {
+    if (!value) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    auto& st = s::GetState();
+    switch (buffer) {
+        case GL_COLOR: {
+            if (drawbuffer < 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            // Integer color formats: mirror the raw ints as RGBA8 floats.
+            float f[4];
+            for (int i = 0; i < 4; ++i) f[i] = (float)value[i];
+            st.clear_color[0] = f[0]; st.clear_color[1] = f[1];
+            st.clear_color[2] = f[2]; st.clear_color[3] = f[3];
+            v::EnsureInit();
+            v::SetClearColor(f[0], f[1], f[2], f[3]);
+            v::SetClearAttachment(drawbuffer);
+            v::SetClearMask(GL_COLOR_BUFFER_BIT);
+            return;
+        }
+        case GL_STENCIL:
+            if (drawbuffer != 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            st.clear_stencil = value[0];
+            v::EnsureInit();
+            v::SetClearStencil(value[0]);
+            v::SetClearAttachment(-1);
+            v::SetClearMask(GL_STENCIL_BUFFER_BIT);
+            return;
+        default:
+            PUSH_ERROR(GL_INVALID_ENUM);
+    }
+}
+
+void APIENTRY glClearBufferuiv(GLenum buffer, GLint drawbuffer, const GLuint* value) {
+    if (!value) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    auto& st = s::GetState();
+    switch (buffer) {
+        case GL_COLOR: {
+            if (drawbuffer < 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            float f[4];
+            for (int i = 0; i < 4; ++i) f[i] = (float)value[i];
+            st.clear_color[0] = f[0]; st.clear_color[1] = f[1];
+            st.clear_color[2] = f[2]; st.clear_color[3] = f[3];
+            v::EnsureInit();
+            v::SetClearColor(f[0], f[1], f[2], f[3]);
+            v::SetClearAttachment(drawbuffer);
+            v::SetClearMask(GL_COLOR_BUFFER_BIT);
+            return;
+        }
+        default:
+            PUSH_ERROR(GL_INVALID_ENUM);
+    }
+}
+
+void APIENTRY glClearBufferfi(GLenum buffer, GLint drawbuffer, GLfloat depth,
+                              GLint stencil) {
+    if (buffer != GL_DEPTH_STENCIL) { PUSH_ERROR(GL_INVALID_ENUM); return; }
+    if (drawbuffer != 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    auto& st = s::GetState();
+    st.clear_depth = depth;
+    st.clear_stencil = stencil;
+    v::EnsureInit();
+    v::SetClearDepth(depth);
+    v::SetClearStencil(stencil);
+    v::SetClearAttachment(-1);
+    v::SetClearMask(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 }
 
 // ---- face / polygon --------------------------------------------------------
@@ -176,6 +284,54 @@ void APIENTRY glSampleCoverage(GLfloat value, GLboolean invert) {
 void APIENTRY glSampleMaski(GLuint index, GLbitfield mask) {
     if (index >= 32) { PUSH_ERROR(GL_INVALID_VALUE); return; }
     s::GetState().sample_masks[index] = mask;
+}
+
+// ---- glGetMultisamplefv (GL 3.3) -------------------------------------------
+// Mirrors MobileGL: only GL_SAMPLE_POSITION is answerable on the degraded
+// path; every sample of a multisample target sits at the pixel centre.
+
+void APIENTRY glGetMultisamplefv(GLenum pname, GLuint index, GLfloat* val) {
+    if (!val) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (pname != GL_SAMPLE_POSITION) { PUSH_ERROR(GL_INVALID_ENUM); return; }
+    if (index >= 64) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    val[0] = 0.5f; val[1] = 0.5f;
+}
+
+// ---- glPointParameter* (GL 3.3 point rasterization params) ----------------
+
+void APIENTRY glPointParameterf(GLenum pname, GLfloat param) {
+    auto& st = s::GetState();
+    switch (pname) {
+        case GL_POINT_FADE_THRESHOLD_SIZE: st.point_fade_threshold = param; break;
+        default: PUSH_ERROR(GL_INVALID_ENUM);
+    }
+}
+
+void APIENTRY glPointParameterfv(GLenum pname, const GLfloat* params) {
+    if (!params) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    glPointParameterf(pname, params[0]);
+}
+
+void APIENTRY glPointParameteri(GLenum pname, GLint param) {
+    auto& st = s::GetState();
+    switch (pname) {
+        case GL_POINT_SPRITE_COORD_ORIGIN:
+            if (param != GL_UPPER_LEFT && param != GL_LOWER_LEFT) {
+                PUSH_ERROR(GL_INVALID_VALUE);
+                return;
+            }
+            st.point_sprite_origin = (GLenum)param;
+            break;
+        case GL_POINT_FADE_THRESHOLD_SIZE:
+            glPointParameterf(pname, (GLfloat)param);
+            break;
+        default: PUSH_ERROR(GL_INVALID_ENUM);
+    }
+}
+
+void APIENTRY glPointParameteriv(GLenum pname, const GLint* params) {
+    if (!params) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    glPointParameteri(pname, params[0]);
 }
 
 // ---- depth mask/depth func: they act on the GLSL compoe depth test --------
@@ -410,6 +566,7 @@ void APIENTRY glGetFloatv(GLenum pname, GLfloat* data) {
     switch (pname) {
         case GL_LINE_WIDTH:  *data = st.line_width; break;
         case GL_POINT_SIZE:  *data = st.point_size; break;
+        case GL_POINT_FADE_THRESHOLD_SIZE: *data = st.point_fade_threshold; break;
         case GL_VIEWPORT:
             data[0] = (GLfloat)st.viewport.x; data[1] = (GLfloat)st.viewport.y;
             data[2] = (GLfloat)st.viewport.w; data[3] = (GLfloat)st.viewport.h;
@@ -441,6 +598,8 @@ void APIENTRY glGetIntegerv(GLenum pname, GLint* data) {
         case GL_MINOR_VERSION: *data = 3; break;
         case GL_CONTEXT_PROFILE_MASK: *data = GL_CONTEXT_CORE_PROFILE_BIT; break;
         case GL_SAMPLE_MASK: *data = st.sample_masks[0] ? 1 : 0; break;
+        case GL_POINT_SPRITE_COORD_ORIGIN: *data = st.point_sprite_origin; break;
+        case GL_MAX_SAMPLES: *data = 64; break;
         default: PUSH_ERROR(GL_INVALID_ENUM);
     }
 }

@@ -42,6 +42,12 @@ void SetClearMask(GLbitfield mask) {
     g.clear_mask = mask;
 }
 
+void SetClearAttachment(int index) {
+    g.pending_clear = true;
+    g.frame_dirty = true;
+    g.clear_attachment = index;
+}
+
 void SetClearDepth(double depth) { g.clear_depth = depth; }
 void SetClearStencil(GLint value) { g.clear_stencil = value; }
 

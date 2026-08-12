@@ -10,6 +10,8 @@
 //   - glPrimitiveRestartIndex: a triangle strip split by a restart marker
 //     renders two separate triangles (no connecting fan across the middle)
 //   - glProvokingVertex state setter + error path
+//   - glBegin/EndConditionalRender (MobileGL-degraded: no real gating) +
+//     error paths (nested begin / bad mode / bad id / end-without-begin)
 //
 // Usage:  gcc -o tests/query_smoke tests/query_smoke.c -ldl [-lm]
 
@@ -55,6 +57,10 @@ typedef void* GLvoid;
 #define GL_TIMESTAMP                        0x8E28
 #define GL_PRIMITIVES_GENERATED             0x8C87
 #define GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN 0x8C88
+#define GL_QUERY_WAIT               0x8E13
+#define GL_QUERY_NO_WAIT            0x8E14
+#define GL_QUERY_BY_REGION_WAIT     0x8E15
+#define GL_QUERY_BY_REGION_NO_WAIT  0x8E16
 #define GL_QUERY_COUNTER_BITS               0x8864
 #define GL_CURRENT_QUERY                    0x8865
 #define GL_QUERY_RESULT                     0x8866
@@ -113,6 +119,8 @@ static void (*glGetQueryObjecti64v)(GLuint, GLenum, int64_t*);
 static void (*glGetQueryObjectui64v)(GLuint, GLenum, uint64_t*);
 static void (*glPrimitiveRestartIndex)(GLuint);
 static void (*glProvokingVertex)(GLenum);
+static void (*glBeginConditionalRender)(GLuint, GLenum);
+static void (*glEndConditionalRender)(void);
 
 #define LOAD(name)                                                            \
     do {                                                                      \
@@ -180,6 +188,7 @@ int main(void) {
     LOAD(glGetQueryiv);   LOAD(glGetQueryObjectiv);LOAD(glGetQueryObjectuiv);
     LOAD(glGetQueryObjecti64v);LOAD(glGetQueryObjectui64v);
     LOAD(glPrimitiveRestartIndex);LOAD(glProvokingVertex);
+    LOAD(glBeginConditionalRender);LOAD(glEndConditionalRender);
 
     glViewport(0, 0, 512, 512);
 
@@ -477,6 +486,30 @@ int main(void) {
         glProvokingVertex(0xDEAD);
         CHECK(glGetError() == GL_INVALID_ENUM,
               "glProvokingVertex bad mode -> INVALID_ENUM");
+        glGetError();
+    }
+
+    /* -- glBeginConditionalRender (degraded: no real gating) -------- */
+    {
+        glBeginConditionalRender(q1, GL_QUERY_WAIT);
+        glEndConditionalRender();
+        CHECK(glGetError() == GL_NO_ERROR,
+              "glBegin/EndConditionalRender with live query ok");
+        glBeginConditionalRender(q1, GL_QUERY_BY_REGION_NO_WAIT);
+        glBeginConditionalRender(q1, GL_QUERY_WAIT);
+        CHECK(glGetError() == GL_INVALID_OPERATION,
+              "nested glBeginConditionalRender -> INVALID_OPERATION");
+        glEndConditionalRender();
+        glGetError();
+        glBeginConditionalRender(q1, 0xDEAD);
+        CHECK(glGetError() == GL_INVALID_ENUM,
+              "glBeginConditionalRender bad mode -> INVALID_ENUM");
+        glBeginConditionalRender(q1 + 9999, GL_QUERY_WAIT);
+        CHECK(glGetError() == GL_INVALID_VALUE,
+              "glBeginConditionalRender bad id -> INVALID_VALUE");
+        glEndConditionalRender();
+        CHECK(glGetError() == GL_INVALID_OPERATION,
+              "glEndConditionalRender without begin -> INVALID_OPERATION");
         glGetError();
     }
 

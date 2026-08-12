@@ -181,6 +181,9 @@ uint32_t TargetHeight();
 void SetClearColor(float r, float g, float b, float a);
 // GLbitfield from glClear: decide which buffer(s) get cleared next flush.
 void SetClearMask(GLbitfield mask);
+// glClearBuffer*: restrict the pending clear to one color attachment
+// (-1 = all enabled draw buffers).
+void SetClearAttachment(int index);
 // Clear values for GL_DEPTH_BUFFER_BIT / GL_STENCIL_BUFFER_BIT.
 void SetClearDepth(double depth);
 void SetClearStencil(GLint value);

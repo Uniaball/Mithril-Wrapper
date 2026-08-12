@@ -2,8 +2,8 @@
 
 来源：MobileGL include/GL/glcorearb.h（Khronos 官方），GL_VERSION_1_0..3_3 累计。
 
-> 实现状态（M6 stage E 完成）：S1 51/55、S2 60/71、S3 76/114、S4 42/42、S5 24/24、S6 33/36 已真实现（`src/gl/state.cpp`/`shader.cpp`/`vertex.cpp`/`draw.cpp`/`texture.cpp`/`fbo.cpp`/`sync.cpp`/`query.cpp`/`sampler.cpp` + `src/shader/`（glsl/reflect/registry 三 TU）+ `src/vk/`（engine/dispatch/target/pipeline/fbo/draw/query 七 TU + texture）），合计 284 真导出；其余为 stub（返回 `GL_INVALID_OPERATION` + 日志）。M5 验收：`fbo_smoke`（state pipeline 17 断言 + FBO 纹理/RBO/blit + MRT 双附件回读/单 drawBuffer 门控 + MSAA 4x resolve，29 行 ok / 28 断言）。M6 stage C 验收：`sync_smoke`。M6 stage D 验收：`query_smoke`（S6 query 13 函数 + 深度遮挡/时间戳计数 + primitive restart + provoking vertex，60 断言，lavapipe 通过）。M6 stage E 验收：`sampler_smoke`（S6 sampler 14 函数 + 采样器/纹理解耦 + 绑定/回退渲染，lavapipe 通过）。余 ConditionalRender 2、S3 剩余 38 个 stub 待启动。
-> S3 剩余 38 个 stub（无绘制影响）：TransformFeedback 系 5（Begin/End/GetVarying/BindBufferBase/Range）、glPointParameter* 4、整型属性 setter 系 20（glVertexAttribI1..I4 各变体）、打包 setter 系 8（glVertexAttribP*）、glVertexAttrib4Nub。
+> 实现状态（M6 stage F 完成）：**342/342 全部真实现**（`src/gl/state.cpp`/`shader.cpp`/`vertex.cpp`/`draw.cpp`/`texture.cpp`/`fbo.cpp`/`sync.cpp`/`query.cpp`/`sampler.cpp` + `src/shader/`（glsl/reflect/registry 三 TU）+ `src/vk/`（engine/dispatch/target/pipeline/fbo/draw/query 七 TU + texture）），**0 stub**。M5 验收：`fbo_smoke`（state pipeline 17 断言 + FBO 纹理/RBO/blit + MRT 双附件回读/单 drawBuffer 门控 + MSAA 4x resolve，29 行 ok / 28 断言）。M6 stage C 验收：`sync_smoke`。M6 stage D 验收：`query_smoke`（S6 query 13 函数 + 深度遮挡/时间戳计数 + primitive restart + provoking vertex，60 断言，lavapipe 通过）。M6 stage E 验收：`sampler_smoke`（S6 sampler 14 函数 + 采样器/纹理解耦 + 绑定/回退渲染，lavapipe 通过）。M6 stage F 收尾：S1 补 5（glClearBuffer* × 4 + glGetMultisamplefv）、S2 补 11（fragData/uniform-block introspection）、S3 补 38（TransformFeedback CPU 计数 + 打包/整型常量 + point 参数）、S4 补 3（multisample texture）、S6 补 2（ConditionalRender，MobileGL 降级不真正门控）——全部转真，gen_gl_stubs.py 重新生成 0 stub。
+> 旧 S3 剩余 38 个 stub 名单（已在本轮全部转真，留档）：TransformFeedback 系 5（Begin/End/GetVarying/BindBufferBase/Range）、glPointParameter* 4、整型属性 setter 系 20（glVertexAttribI1..I4 各变体）、打包 setter 系 8（glVertexAttribP*）、glVertexAttrib4Nub。
 
 ## S1 状态/使能/基础查询 — 55
 
@@ -87,11 +87,12 @@ glIsFramebuffer           glIsRenderbuffer          glReadBuffer              gl
 
 > ✅ sync 6/36（M6 stage C）真实现完成：`glFenceSync glDeleteSync glIsSync glClientWaitSync glWaitSync glGetSynciv`（src/gl/sync.cpp，GLsync 包装 VkFence；未提交帧先 flush；无后端降级按 MobileGL always-signaled 模式）；sync_smoke 通过。
 > ✅ Query 13/36（M6 stage D）真实现完成：`glGenQueries glDeleteQueries glIsQuery glBeginQuery glEndQuery glGetQueryiv glGetQueryObjectiv/uiv/i64v/ui64v glQueryCounter`（src/gl/query.cpp + src/vk/query.cpp：每查询包装 VkQueryPool 槽；SAMPLES_PASSED/ANY_SAMPLES_PASSED 遮挡计数（含深度测试 0/非 0 判定，SAMPLES_PASSED 依赖 occlusionQueryPrecise、ANY 不依赖）、TIME_ELAPSED（begin/end 双时间戳差值 × timestampPeriod）、GL_TIMESTAMP（glQueryCounter 单写）；降级语义同 sync）；+ `glPrimitiveRestartIndex`（GL 层改写 restart index→0xFFFFFFFF，DrawCommon v_count 跳过标记）+ `glProvokingVertex`（入 PipelineState key，VK_EXT_provoking_vertex 存在时启 provokingVertexLast）；query_smoke 60 断言通过。
-> ✅ Sampler 14/36（M6 stage E）真实现完成：`glGenSamplers glDeleteSamplers glIsSampler glBindSampler glSamplerParameter{f,fv,i,iv,Iiv,Iuiv} glGetSamplerParameter{fv,iv,Iiv,Iuiv}`（src/gl/sampler.cpp + 引擎常驻 VkSampler 表：采样器状态与纹理解耦，`SamplerBind` 升级 (binding, sampler_id, tex_id)，GL draw 路径下传 sampler_id，无 sampler 对象（sampler_id==0）时回退纹理自带 sampler）；引擎新增 UpdateSampler/DestroyResidentSampler/GetResidentSampler；sampler_smoke 通过。余 ConditionalRender 2 待启动。
+> ✅ Sampler 14/36（M6 stage E）真实现完成：`glGenSamplers glDeleteSamplers glIsSampler glBindSampler glSamplerParameter{f,fv,i,iv,Iiv,Iuiv} glGetSamplerParameter{fv,iv,Iiv,Iuiv}`（src/gl/sampler.cpp + 引擎常驻 VkSampler 表：采样器状态与纹理解耦，`SamplerBind` 升级 (binding, sampler_id, tex_id)，GL draw 路径下传 sampler_id，无 sampler 对象（sampler_id==0）时回退纹理自带 sampler）；引擎新增 UpdateSampler/DestroyResidentSampler/GetResidentSampler；sampler_smoke 通过。
+> ✅ ConditionalRender 2/36（M6 stage F）真实现完成：`glBeginConditionalRender/glEndConditionalRender`（src/gl/query.cpp，按 MobileGL 降级语义：校验 mode 四值/id 存活/嵌套与配对规则，不真正门控绘制）；query_smoke 补 6 断言（含嵌套 begin、坏 mode、坏 id、无 begin 直接 end 错误路径）。**S6 36/36 完成。**
 
 ```
-glBeginConditionalRender      glBeginQuery ✅            glBindSampler ✅            glClientWaitSync ✅         glDeleteQueries ✅          glDeleteSamplers ✅       
-glDeleteSync ✅               glEndConditionalRender    glEndQuery ✅              glFenceSync ✅              glGenQueries ✅             glGenSamplers ✅          
+glBeginConditionalRender ✅    glBeginQuery ✅            glBindSampler ✅            glClientWaitSync ✅         glDeleteQueries ✅          glDeleteSamplers ✅       
+glDeleteSync ✅               glEndConditionalRender ✅  glEndQuery ✅              glFenceSync ✅              glGenQueries ✅             glGenSamplers ✅          
 glGetQueryObjecti64v ✅       glGetQueryObjectiv ✅      glGetQueryObjectui64v ✅   glGetQueryObjectuiv ✅      glGetQueryiv ✅             glGetSamplerParameterIiv ✅
 glGetSamplerParameterIuiv ✅    glGetSamplerParameterfv ✅  glGetSamplerParameteriv ✅  glGetSynciv ✅              glIsQuery ✅                glIsSampler ✅            
 glIsSync ✅                   glPrimitiveRestartIndex ✅ glProvokingVertex ✅       glQueryCounter ✅           glSamplerParameterIiv ✅      glSamplerParameterIuiv ✅ 

@@ -321,6 +321,24 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
 
     v::DrawParams dp;
     dp.program = CreateVProgram(prog);
+    // Stage F (S3): CPU-side transform feedback counting. When a TFB session
+    // is open, accumulate the primitives this draw generates (pre-clipping,
+    // matching GL_PRIMITIVES_GENERATED semantics) so glEndTransformFeedback
+    // can write a count into the bound GL_TRANSFORM_FEEDBACK_BUFFER mirrors.
+    if (g_tfb_active) {
+        switch (mode) {
+            case GL_POINTS: g_tfb_primitives += (uint64_t)(count > 0 ? count : 0); break;
+            case GL_LINES: g_tfb_primitives += (uint64_t)std::max(0, count / 2); break;
+            case GL_LINE_STRIP: g_tfb_primitives += (uint64_t)std::max(0, count - 1); break;
+            case GL_LINE_LOOP: g_tfb_primitives += (uint64_t)std::max(0, count); break;
+            case GL_TRIANGLES: g_tfb_primitives += (uint64_t)std::max(0, count / 3); break;
+            case GL_TRIANGLE_STRIP:
+            case GL_TRIANGLE_FAN:
+                g_tfb_primitives += (uint64_t)std::max(0, count - 2);
+                break;
+            default: break;
+        }
+    }
     dp.vertex_stream = std::move(vstream);
     dp.instance_stream = std::move(istream);
     dp.indices = idx;  // raw u32 indices into the payload rows

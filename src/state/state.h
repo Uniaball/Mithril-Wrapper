@@ -98,6 +98,9 @@ struct GLState {
     GLenum polygon_mode = GL_FILL;
     GLfloat line_width = 1.0f;
     GLfloat point_size = 1.0f;
+    // S3: glPointParameter* state (rasterizer point params).
+    GLfloat point_fade_threshold = 1.0f;
+    GLenum point_sprite_origin = GL_UPPER_LEFT;
     GLfloat poly_offset_factor = 0.0f, poly_offset_units = 0.0f;
     GLfloat sample_coverage_value = 0.5f;
     GLboolean sample_coverage_invert = GL_FALSE;

@@ -34,6 +34,29 @@ struct Uniform {
     GLenum type = GL_FLOAT;
     GLint location = -1;
     std::vector<float> value;
+    // Uniform-block introspection (S2): index of the owning block in
+    // Program::uniform_blocks (-1 = standalone / sampler) and the member's
+    // std140 byte offset inside that block (0 for standalone uniforms).
+    GLint block_index = -1;
+    GLint block_offset = 0;
+};
+
+// One reflected uniform block (explicit `uniform Block { .. }` declarations
+// and the synthetic mithril_GlobalBlock wrapper alike).
+struct UniformBlock {
+    std::string name;
+    GLenum binding = 0;
+    GLint data_size = 0;         // std140 struct size in bytes
+    std::vector<GLint> members;  // indices into Program::uniforms
+    bool referenced_by_vs = false;
+    bool referenced_by_fs = false;
+};
+
+// Original-view fragment data binding: name -> (color number, index) recorded
+// by glBindFragDataLocation/Indexed (answered by glGetFragData*).
+struct FragDataBind {
+    GLuint color = 0;
+    GLuint index = 0;
 };
 
 // A sampled-image uniform: the sampler's Vulkan binding (assigned by
@@ -56,6 +79,12 @@ struct Program {
     std::unordered_map<GLint, size_t> uniform_by_location;     // location -> uniforms idx
     std::unordered_map<std::string, GLint> attrib_locations;   // name -> location
     std::vector<SamplerRef> samplers;      // M4: active sampler uniforms
+    // S2 stage F: uniform-block introspection + fragment data bindings.
+    std::vector<UniformBlock> uniform_blocks;  // index == GL block index
+    std::unordered_map<std::string, FragDataBind> frag_data;   // GL name -> binding
+    // S3 stage F: transform-feedback varying capture list (glTransformFeedbackVaryings).
+    std::vector<std::string> tfb_varyings;
+    GLenum tfb_buffer_mode = GL_INTERLEAVED_ATTRIBS;
     std::vector<uint32_t> vertex_spirv;    // linked stage SPIR-V
     std::vector<uint32_t> fragment_spirv;
 };

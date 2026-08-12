@@ -473,6 +473,7 @@ struct Engine {
     bool pending_clear = false;
     GLbitfield clear_mask = 0;
     float clear_r = 0, clear_g = 0, clear_b = 0, clear_a = 0;
+    int clear_attachment = -1;   // glClearBuffer*: which color attachment (-1 = all)
     double clear_depth = 1.0;
     int clear_stencil = 0;
     float vp_x = 0, vp_y = 0, vp_w = 512, vp_h = 512;

@@ -22,6 +22,12 @@ GLuint g_bound_element_buffer = 0;
 // draw path; erased by the shader-lifecycle path on glDeleteProgram).
 std::unordered_map<GLuint, uint64_t> g_vk_programs;
 
+// Stage F (S3): transform feedback CPU counting state.
+bool g_tfb_active = false;
+uint64_t g_tfb_primitives = 0;
+std::unordered_map<GLenum, std::array<IndexedBinding, kMaxIndexedBindings>>
+    g_indexed_bindings;
+
 extern "C" {
 
 // ---- vertex arrays / buffers / draw (milestone M2-VK) -----------------------
@@ -374,6 +380,184 @@ void APIENTRY glVertexAttrib4Nubv(GLuint index, const GLubyte* v) { GLfloat f[4]
 void APIENTRY glVertexAttrib4Nusv(GLuint index, const GLushort* v) { GLfloat f[4]; for (int i=0;i<4;++i) f[i]=(GLfloat)v[i]/65535.0f; SetConstantAttrib(index, f, 4); }
 void APIENTRY glVertexAttrib4Nuiv(GLuint index, const GLuint* v) { GLfloat f[4]; for (int i=0;i<4;++i) f[i]=(GLfloat)v[i]/4294967295.0f; SetConstantAttrib(index, f, 4); }
 
+// ---- integer generic constants (glVertexAttribI*, S3) ----------------------
+// Keep the exact integer values (glGetVertexAttribIiv/Iuiv answer them) and
+// mirror a float copy for the draw path.
+
+void SetConstantAttribI(GLuint index, const GLint* v, GLsizei n) {
+    if (index >= kMaxAttribs || n < 1 || n > 4) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    AttribData& a = g_vaos[g_bound_vao].attribs[index];
+    a.is_pointer = false;
+    for (GLsizei i = 0; i < n; ++i) {
+        a.constant_i[i] = v[i];
+        a.constant[i] = (GLfloat)v[i];
+    }
+    for (GLsizei i = n; i < 4; ++i) {
+        a.constant_i[i] = i == 3 ? 1 : 0;
+        a.constant[i] = i == 3 ? 1.0f : 0.0f;
+    }
+}
+
+void APIENTRY glVertexAttribI1i(GLuint index, GLint x) { GLint v[1] = {x}; SetConstantAttribI(index, v, 1); }
+void APIENTRY glVertexAttribI2i(GLuint index, GLint x, GLint y) { GLint v[2] = {x, y}; SetConstantAttribI(index, v, 2); }
+void APIENTRY glVertexAttribI3i(GLuint index, GLint x, GLint y, GLint z) { GLint v[3] = {x, y, z}; SetConstantAttribI(index, v, 3); }
+void APIENTRY glVertexAttribI4i(GLuint index, GLint x, GLint y, GLint z, GLint w) { GLint v[4] = {x, y, z, w}; SetConstantAttribI(index, v, 4); }
+void APIENTRY glVertexAttribI1iv(GLuint index, const GLint* v) { SetConstantAttribI(index, v, 1); }
+void APIENTRY glVertexAttribI2iv(GLuint index, const GLint* v) { SetConstantAttribI(index, v, 2); }
+void APIENTRY glVertexAttribI3iv(GLuint index, const GLint* v) { SetConstantAttribI(index, v, 3); }
+void APIENTRY glVertexAttribI4iv(GLuint index, const GLint* v) { SetConstantAttribI(index, v, 4); }
+void APIENTRY glVertexAttribI4bv(GLuint index, const GLbyte* v) { GLint f[4]; for (int i=0;i<4;++i) f[i]=v[i]; SetConstantAttribI(index, f, 4); }
+void APIENTRY glVertexAttribI4sv(GLuint index, const GLshort* v) { GLint f[4]; for (int i=0;i<4;++i) f[i]=v[i]; SetConstantAttribI(index, f, 4); }
+void APIENTRY glVertexAttribI4ubv(GLuint index, const GLubyte* v) { GLint f[4]; for (int i=0;i<4;++i) f[i]=v[i]; SetConstantAttribI(index, f, 4); }
+void APIENTRY glVertexAttribI4usv(GLuint index, const GLushort* v) { GLint f[4]; for (int i=0;i<4;++i) f[i]=v[i]; SetConstantAttribI(index, f, 4); }
+
+void APIENTRY glVertexAttribI1ui(GLuint index, GLuint x) { GLuint v[1] = {x}; SetConstantAttribI(index, (const GLint*)v, 1); }
+void APIENTRY glVertexAttribI2ui(GLuint index, GLuint x, GLuint y) { GLuint v[2] = {x, y}; SetConstantAttribI(index, (const GLint*)v, 2); }
+void APIENTRY glVertexAttribI3ui(GLuint index, GLuint x, GLuint y, GLuint z) { GLuint v[3] = {x, y, z}; SetConstantAttribI(index, (const GLint*)v, 3); }
+void APIENTRY glVertexAttribI4ui(GLuint index, GLuint x, GLuint y, GLuint z, GLuint w) { GLuint v[4] = {x, y, z, w}; SetConstantAttribI(index, (const GLint*)v, 4); }
+void APIENTRY glVertexAttribI1uiv(GLuint index, const GLuint* v) { SetConstantAttribI(index, (const GLint*)v, 1); }
+void APIENTRY glVertexAttribI2uiv(GLuint index, const GLuint* v) { SetConstantAttribI(index, (const GLint*)v, 2); }
+void APIENTRY glVertexAttribI3uiv(GLuint index, const GLuint* v) { SetConstantAttribI(index, (const GLint*)v, 3); }
+void APIENTRY glVertexAttribI4uiv(GLuint index, const GLuint* v) { SetConstantAttribI(index, (const GLint*)v, 4); }
+
+// ---- packed generic constants (glVertexAttribP*, S3) -----------------------
+// Decode 2_10_10_10 packed values into float constants (per MobileGL; the
+// draw path only sees the decoded floats).
+
+void SetConstantAttribP(GLuint index, GLenum type, GLboolean normalized,
+                        const GLuint* v, GLsizei n) {
+    if (index >= kMaxAttribs || n < 1 || n > 4) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (type != GL_INT_2_10_10_10_REV && type != GL_UNSIGNED_INT_2_10_10_10_REV) {
+        PUSH_ERROR(GL_INVALID_ENUM);
+        return;
+    }
+    AttribData& a = g_vaos[g_bound_vao].attribs[index];
+    a.is_pointer = false;
+    GLfloat f[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    GLuint val = v[0];
+    if (type == GL_INT_2_10_10_10_REV) {
+        // Sign-extend each 10-bit field (w is 2 bits).
+        GLint x = (GLint)(val << 22) >> 22;
+        GLint y = (GLint)((val << 12) & 0xFFFFFFFFu) >> 22;
+        GLint z = (GLint)((val << 2) & 0xFFFFFFFFu) >> 22;
+        GLint w = (GLint)((val >> 30) & 3u);
+        if (w >= 2) w -= 4;
+        GLint comp[4] = {x, y, z, w};
+        for (GLsizei i = 0; i < 4; ++i) {
+            GLfloat divisor = i == 3 ? 1.0f : 511.0f;
+            f[i] = normalized ? std::max(-1.0f, comp[i] / divisor)
+                              : (GLfloat)comp[i];
+        }
+    } else {
+        GLuint comp[4] = {val & 0x3FFu, (val >> 10) & 0x3FFu,
+                          (val >> 20) & 0x3FFu, (val >> 30) & 0x3u};
+        for (GLsizei i = 0; i < 4; ++i) {
+            GLfloat divisor = i == 3 ? 3.0f : 1023.0f;
+            f[i] = normalized ? comp[i] / divisor : (GLfloat)comp[i];
+        }
+    }
+    for (GLsizei i = 0; i < 4; ++i) {
+        a.constant[i] = f[i];
+        a.constant_i[i] = (GLint)f[i];
+    }
+}
+
+void APIENTRY glVertexAttribP1ui(GLuint index, GLenum type, GLboolean normalized, GLuint value) {
+    SetConstantAttribP(index, type, normalized, &value, 1);
+}
+void APIENTRY glVertexAttribP2ui(GLuint index, GLenum type, GLboolean normalized, GLuint value) {
+    SetConstantAttribP(index, type, normalized, &value, 2);
+}
+void APIENTRY glVertexAttribP3ui(GLuint index, GLenum type, GLboolean normalized, GLuint value) {
+    SetConstantAttribP(index, type, normalized, &value, 3);
+}
+void APIENTRY glVertexAttribP4ui(GLuint index, GLenum type, GLboolean normalized, GLuint value) {
+    SetConstantAttribP(index, type, normalized, &value, 4);
+}
+void APIENTRY glVertexAttribP1uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint* value) {
+    if (!value) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    SetConstantAttribP(index, type, normalized, value, 1);
+}
+void APIENTRY glVertexAttribP2uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint* value) {
+    if (!value) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    SetConstantAttribP(index, type, normalized, value, 2);
+}
+void APIENTRY glVertexAttribP3uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint* value) {
+    if (!value) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    SetConstantAttribP(index, type, normalized, value, 3);
+}
+void APIENTRY glVertexAttribP4uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint* value) {
+    if (!value) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    SetConstantAttribP(index, type, normalized, value, 4);
+}
+
+// ---- transform feedback (S3, CPU-counted) -----------------------------------
+
+// -- helpers shared with draw.cpp for the CPU primitive counter --
+
+void APIENTRY glBeginTransformFeedback(GLenum primitiveMode) {
+    if (primitiveMode != GL_POINTS && primitiveMode != GL_LINES &&
+        primitiveMode != GL_TRIANGLES) {
+        PUSH_ERROR(GL_INVALID_ENUM);
+        return;
+    }
+    if (g_tfb_active) { PUSH_ERROR(GL_INVALID_OPERATION); return; }
+    g_tfb_active = true;
+    g_tfb_primitives = 0;
+}
+
+void APIENTRY glEndTransformFeedback(void) {
+    if (!g_tfb_active) { PUSH_ERROR(GL_INVALID_OPERATION); return; }
+    g_tfb_active = false;
+    // CPU count: write the accumulated primitive count into every buffer
+    // bound under GL_TRANSFORM_FEEDBACK_BUFFER (interleaved mode writes to
+    // all bound buffers, matching the GL contract for one varying).
+    auto it = g_indexed_bindings.find(GL_TRANSFORM_FEEDBACK_BUFFER);
+    if (it != g_indexed_bindings.end()) {
+        uint64_t count = g_tfb_primitives;
+        for (auto& b : it->second) {
+            if (!b.buffer) continue;
+            auto bit = g_buffers.find(b.buffer);
+            if (bit == g_buffers.end()) continue;
+            GLsizeiptr off = b.offset;
+            if (off < 0 || off + (GLsizeiptr)4 > (GLsizeiptr)bit->second.data.size())
+                continue;
+            if (b.size < 0 || (b.size > 0 && b.size >= 4))
+                std::memcpy(bit->second.data.data() + off, &count, 4);
+        }
+    }
+    g_tfb_primitives = 0;
+}
+
+bool IndexedTargetValid(GLenum target, GLenum* error) {
+    switch (target) {
+        case GL_TRANSFORM_FEEDBACK_BUFFER:
+        case GL_UNIFORM_BUFFER:
+            return true;
+        default:
+            *error = GL_INVALID_ENUM;
+            return false;
+    }
+}
+
+void APIENTRY glBindBufferBase(GLenum target, GLuint index, GLuint buffer) {
+    GLenum err = GL_NO_ERROR;
+    if (!IndexedTargetValid(target, &err)) { PUSH_ERROR(err); return; }
+    if (index >= kMaxIndexedBindings) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (buffer != 0 && !g_buffers.count(buffer)) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    g_indexed_bindings[target][index] = {buffer, 0, -1};
+}
+
+void APIENTRY glBindBufferRange(GLenum target, GLuint index, GLuint buffer,
+                                GLintptr offset, GLsizeiptr size) {
+    GLenum err = GL_NO_ERROR;
+    if (!IndexedTargetValid(target, &err)) { PUSH_ERROR(err); return; }
+    if (index >= kMaxIndexedBindings) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (offset < 0 || size < 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (buffer != 0 && !g_buffers.count(buffer)) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    g_indexed_bindings[target][index] = {buffer, offset, size};
+}
+
 // ---- attribute queries ------------------------------------------------------
 
 void GetConstantAttrib(const AttribData& a, GLfloat* out) {
@@ -410,18 +594,30 @@ void APIENTRY glGetVertexAttribiv(GLuint index, GLenum pname, GLint* params) {
     for (int i = 0; i < n; ++i) params[i] = (GLint)f[i];
 }
 void APIENTRY glGetVertexAttribIiv(GLuint index, GLenum pname, GLint* params) {
-    GLfloat f[4]; glGetVertexAttribfv(index, pname, f);
-    int n = (pname == GL_VERTEX_ATTRIB_ARRAY_ENABLED || pname == GL_VERTEX_ATTRIB_ARRAY_SIZE ||
-             pname == GL_VERTEX_ATTRIB_ARRAY_STRIDE || pname == GL_VERTEX_ATTRIB_ARRAY_TYPE ||
-             pname == GL_VERTEX_ATTRIB_ARRAY_NORMALIZED) ? 1 : 4;
-    for (int i = 0; i < n; ++i) params[i] = (GLint)f[i];
+    if (index >= kMaxAttribs) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    const AttribData& a = g_vaos[g_bound_vao].attribs[index];
+    switch (pname) {
+        case GL_VERTEX_ATTRIB_ARRAY_ENABLED: params[0] = a.enabled ? 1 : 0; break;
+        case GL_VERTEX_ATTRIB_ARRAY_SIZE: params[0] = a.size; break;
+        case GL_VERTEX_ATTRIB_ARRAY_STRIDE: params[0] = a.stride; break;
+        case GL_VERTEX_ATTRIB_ARRAY_TYPE: params[0] = (GLint)a.type; break;
+        case GL_VERTEX_ATTRIB_ARRAY_NORMALIZED: params[0] = a.normalized ? 1 : 0; break;
+        default:
+            for (int i = 0; i < 4; ++i) params[i] = a.constant_i[i];
+    }
 }
 void APIENTRY glGetVertexAttribIuiv(GLuint index, GLenum pname, GLuint* params) {
-    GLfloat f[4]; glGetVertexAttribfv(index, pname, f);
-    int n = (pname == GL_VERTEX_ATTRIB_ARRAY_ENABLED || pname == GL_VERTEX_ATTRIB_ARRAY_SIZE ||
-             pname == GL_VERTEX_ATTRIB_ARRAY_STRIDE || pname == GL_VERTEX_ATTRIB_ARRAY_TYPE ||
-             pname == GL_VERTEX_ATTRIB_ARRAY_NORMALIZED) ? 1 : 4;
-    for (int i = 0; i < n; ++i) params[i] = (GLuint)f[i];
+    if (index >= kMaxAttribs) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    const AttribData& a = g_vaos[g_bound_vao].attribs[index];
+    switch (pname) {
+        case GL_VERTEX_ATTRIB_ARRAY_ENABLED: params[0] = a.enabled ? 1u : 0u; break;
+        case GL_VERTEX_ATTRIB_ARRAY_SIZE: params[0] = (GLuint)a.size; break;
+        case GL_VERTEX_ATTRIB_ARRAY_STRIDE: params[0] = (GLuint)a.stride; break;
+        case GL_VERTEX_ATTRIB_ARRAY_TYPE: params[0] = (GLuint)a.type; break;
+        case GL_VERTEX_ATTRIB_ARRAY_NORMALIZED: params[0] = a.normalized ? 1u : 0u; break;
+        default:
+            for (int i = 0; i < 4; ++i) params[i] = (GLuint)a.constant_i[i];
+    }
 }
 void APIENTRY glGetVertexAttribPointerv(GLuint index, GLenum pname, void** pointer) {
     if (index >= kMaxAttribs) { PUSH_ERROR(GL_INVALID_VALUE); return; }

@@ -1,8 +1,8 @@
 # Mithril-Wrapper 实现清单（CHECKLIST）
 
-> 状态：**M6 进行中（stage A 帧环 + stage B swapchain/present + stage C S6 sync + stage D S6 query + stage E S6 sampler 已完成，F 待定）**；M5 及以前完成（Linux 冒烟测试通过）。
+> 状态：**M6 stage F 收尾完成：342/342 GL 符号全部转真（0 stub：S1 补 5、S2 补 11、S3 补 38（TF CPU 计数）、S4 补 3、S6 补 ConditionalRender 2）；`multiframe_smoke` 64 帧交替绘制逐帧读回 + `query_smoke` 补条件渲染断言；回归与文档同步完毕，待 commit+push。** M5 及以前完成（Linux 冒烟测试通过）。
 > 配套文档：`docs/gl33_core_list.md`（GL 3.3 core 342 函数分组）、`docs/egl_list.md`（EGL 符号清单）。
-> 测试：`tests/contract_smoke.c`（EGL 契约）、`tests/state_smoke.c`（GL 状态机）、`tests/shader_smoke.c`（着色器管线）、`tests/draw_smoke.c`（GL→Vulkan→读回全链）、`tests/texture_smoke.c`（M4 纹理全链）、`tests/fbo_smoke.c`（M5 状态管线 + S5 FBO/MRT/MSAA）、`tests/multiframe_smoke.c`（M6 帧环）、`tests/sync_smoke.c`（M6 stage C S6 sync 对象）、`tests/query_smoke.c`（M6 stage D S6 query 对象 + primitive restart）、`tests/sampler_smoke.c`（M6 stage E S6 sampler 对象），均需 lavapipe/llvmpipe；`tests/swapchain_smoke.c`（M6 present，Linux 离屏降级 / macOS MoltenVK 真 swapchain），Linux + macOS CI 均跑。
+> 测试：`tests/contract_smoke.c`（EGL 契约）、`tests/state_smoke.c`（GL 状态机）、`tests/shader_smoke.c`（着色器管线）、`tests/draw_smoke.c`（GL→Vulkan→读回全链）、`tests/texture_smoke.c`（M4 纹理全链）、`tests/fbo_smoke.c`（M5 状态管线 + S5 FBO/MRT/MSAA）、`tests/multiframe_smoke.c`（M6 帧环：64 帧交替绘制红/蓝三角形、每帧重写 VBO，async flush + 每 7 帧 sync finish 交错，逐帧中心色 + 对侧暗双点读回，152 项断言）、`tests/sync_smoke.c`（M6 stage C S6 sync 对象）、`tests/query_smoke.c`（M6 stage D S6 query 对象 + primitive restart）、`tests/sampler_smoke.c`（M6 stage E S6 sampler 对象），均需 lavapipe/llvmpipe；`tests/swapchain_smoke.c`（M6 present，Linux 离屏降级 / macOS MoltenVK 真 swapchain），Linux + macOS CI 均跑。
 > M2 已完成：`src/shader/`（Shader/Program 对象表、glslang 编译缓存 .glsl→SPIR-V、SPIRV-Cross 反射 uniform/attrib）、GLSL 150 自动升级到 330 core（含采样器存在时自动升 450 以启用 layout(binding=...) 注入，声明序 1 起绑定）、`gl_VertexID/gl_InstanceID` 重写、松散 uniform 折入合成 UBO（ANGLE 模式）、`glUniform*` 全系 + 矩阵 setter/getter；`src/vk/`（dlsym 动态加载 Vulkan loader/ICD、instance 级函数经真实 instance 句柄解析、UBO 反射 VS+FS 双阶段合并 + 动态 UBO 池、staging 顶点缓冲、renderpass + 清屏 + 帧读回）；`draw_smoke` 全链通过。
 > M3 已完成：S3 组 76/114 真实现——顶点属性全家族（glVertexAttribPointer/IPointer、常量系 1-4、Divisor、Enable/Disable）、attribute 查询（fv/dv/iv/Iiv/Iuiv/Pointerv）、buffer 映射/查询家族（MapBuffer/Range、Unmap、FlushMapped、GetBufferParameteriv/i64v/Pointerv/SubData、CopyBufferSubData）、全部 10 个 draw 入口（DrawArrays/Instanced、DrawElements/BaseVertex/Instanced/InstancedBaseVertex、DrawRangeElements/BaseVertex、MultiDrawArrays/Elements/BaseVertex）；引擎新增双顶点流（VERTEX+INSTANCE binding）、索引缓冲（UBYTE/USHORT/UINT 统一扩 UINT32 staging）、TriangleStrip/Fan 拓扑、实例化（CPU 按 divisor 复制行，无需 EXT）；非 4 字节对齐 stride/offset 由 CPU 打包规整；draw_smoke 扩展 8 断言通过。
 > **M4 完成（S4 42/42）**：`src/vk/texture.cpp`——staging→CmdCopyBufferToImage 全 mip 逐切片上传、常驻 TexObj 表、1x1 白色 dummy 兜底、采样器描述符绑定；image 类型扩展（2D/1D、3D volume、2D/1D array、cubemap，image/view/sampler 按类型创建，wrap_r 接入）；GL 端 `src/gl/texture.cpp` S4 全量 42 函数真实现——对象表（Gen/Delete/Is/Bind/Active）、TexImage1D/2D/3D + TexSub1D/2D/3D（cubemap face 归位、array 分层）、GetTexImage（PACK 对齐回读）、GenerateMipmap（每切片盒式滤波）、TexParameter/GetTexParameter 全系、GetTexLevelParameter（宽/高/深/压缩）、S3TC（DXT1/3/5）CPU 解压 + 原始压缩镜像 + GetCompressedTexImage、CopyTexImage1D/2D + CopyTexSubImage1D/2D/3D（帧读回）、glTexBuffer（buffer 引用 → 1xN 镜像上传）、glPixelStoref；**texture_smoke 26 断言全过**（采样/mip/dummy 白/GetTexImage 往返/DXT1 解压/3D 切片/数组分层/cubemap 6 面+mip/拷贝/texBuffer）。CI 已接 texture_smoke。
@@ -15,7 +15,7 @@
 >   - [x] GL draw 路径下传 `sampler_id`
 >   - [x] `sampler_smoke` 本地通过
 >   - [x] CI 接入（test-linux lavapipe + test-macos-metal MoltenVK 均已加 `sampler_smoke` 编译+运行步骤，grep `SAMPLER SMOKE ALL PASSED`）
-> 待办：M6 stage F（分阶段补充中）。
+> 待办：~~M6 stage F~~（收尾完成：全部 stub 转真 + multiframe_smoke 绘制交替逐帧读回 + query_smoke 条件渲染断言 + CI/文档同步，见上）。
 
 ---
 
@@ -87,7 +87,7 @@
     - S3 Buffer/VAO/顶点/Draw：114（glGenBuffers→glDrawArrays/glDrawElements 全系、glVertexAttrib* 全系）
     - S4 纹理：42（glGenTextures→glTexImage2D/glTexSubImage2D/glGenerateMipmap；**S4 全量 42 真实现完成，texture_smoke 26 断言通过**）
     - S5 FBO/渲染缓冲：24（glGenFramebuffers→glGetFramebufferAttachmentParameteriv 全系 + glDrawBuffer/glDrawBuffers/glReadBuffer + glRenderbufferStorageMultisample；**S5 全量 24 真实现完成，MRT + MSAA 支持，fbo_smoke 29 断言通过**）
-    - S6 同步/Query/Sampler：36（glGenQueries/glFenceSync/glSamplerParameter 系；**S6 33/36 完成：sync 6 + query 13 + sampler 14，sampler_smoke 通过**）
+    - S6 同步/Query/Sampler：36（glGenQueries/glFenceSync/glSamplerParameter 系；**S6 36/36 全部完成：sync 6 + query 13（含 ConditionalRender 2 降级实现）+ sampler 14，query_smoke/sampler_smoke 通过**）
   - 342 全部归入以上六组，无遗漏
 - 未实现函数：导出为 stub，返回 `GL_INVALID_OPERATION` + 日志（MobileGL `DECLARE_GL_FUNCTION_STUB_HEAD` 模式）
 - 最终裁剪依据：M7 用 apitrace 抓 Minecraft 真实调用 → 与 desktopglues 清单交叉
@@ -157,7 +157,7 @@ Vulkan 后端（src/vk/，经 MoltenVK → Metal → CAMetalLayer）
 | **M3 顶点数据** | VAO/VBO、stride/offset 规整、glDrawElements | 用 App 数据绘制 | ✅ S3 76/114 完成（属性全系/映射查询/draw 十入口/双流+索引+拓扑+实例化）；draw_smoke 扩展 8 断言通过 |
 | **M4 纹理** | glTexImage2D 上传、格式/swizzle、采样器、mipmap | 贴图正确 | ✅ S4 42/42 完成（纹理对象表、TexImage/Sub/压缩/CopyTex/GetTexImage/GenerateMipmap/texBuffer）；texture_smoke 26 断言通过 |
 | **M5 状态与管线** | depth/stencil/blend/cull/FBO/MSAA → pipeline 缓存 | 完整三维画面 | ✅ S5 FBO/渲染缓冲 24 函数 + MRT（多附件/每附件 blend/read_buf 读回）+ MSAA（resolve 附件/readres）；fbo_smoke 29 断言全过 |
-| **M6 同步** | 双 CMD buffer、barrier、glFinish/glFlush；swapchain/present；GLsync 同步对象 | 多帧不花屏 | 🔵 进行中：stage A 帧环（`multiframe_smoke` 64 帧 async flush + glFinish 交错，Linux 通过）+ stage B swapchain/present（`swapchain.cpp`：CAMetalLayer → VK_EXT_metal_surface + VK_KHR_swapchain，acquire→blit→present 同步，`mithril_has_swapchain` 探针；macOS CI 经 MoltenVK 真 swapchain `swapchain_smoke` 通过）+ **stage C S6 sync 对象** + **stage D S6 query 对象** + **stage E S6 sampler 对象**（见下）；stage F 待补 |
+| **M6 同步** | 双 CMD buffer、barrier、glFinish/glFlush；swapchain/present；GLsync 同步对象 | 多帧不花屏 | 🔵 M6 六个 stage 全部完成（验收测试全过）：stage A 帧环（`multiframe_smoke` 64 帧交替绘制红/蓝三角形、每帧重写 VBO，async flush + 每 7 帧 sync finish 交错，逐帧中心色 + 对侧暗双点读回，152 项断言，Linux 通过）+ stage B swapchain/present（`swapchain.cpp`：CAMetalLayer → VK_EXT_metal_surface + VK_KHR_swapchain，acquire→blit→present 同步，`mithril_has_swapchain` 探针；macOS CI 经 MoltenVK 真 swapchain `swapchain_smoke` 通过）+ **stage C S6 sync 对象** + **stage D S6 query 对象** + **stage E S6 sampler 对象** + **stage F 收尾（S1 补 5/S2 补 11/S3 补 38/S4 补 3/S6 补 2 → 342/342 全真实现，0 stub）** |
 | **M7 收窄** | apitrace 实测 MC 调用 → 裁剪/补漏 | 与 GL 参考输出截图一致 |
 | **M8 集成** | 打包进 Amethyst，真机验证 | 完整可玩 |
 

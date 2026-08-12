@@ -330,6 +330,222 @@ void APIENTRY glGetUniformuiv(GLuint program, GLint location, GLuint* params) {
     for (size_t i = 0; i < u.value.size() && i < 4; ++i) params[i] = (GLuint)u.value[i];
 }
 
+// ---- fragment data locations (S2) ------------------------------------------
+
+void APIENTRY glBindFragDataLocation(GLuint program, GLuint color,
+                                     const GLchar* name) {
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (!name) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    p->frag_data[name] = {color, 0};
+}
+
+void APIENTRY glBindFragDataLocationIndexed(GLuint program, GLuint colorNumber,
+                                            GLuint index, const GLchar* name) {
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (!name) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    p->frag_data[name] = {colorNumber, index};
+}
+
+GLint APIENTRY glGetFragDataLocation(GLuint program, const GLchar* name) {
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return -1; }
+    if (!name) return -1;
+    auto it = p->frag_data.find(name);
+    return it == p->frag_data.end() ? -1 : (GLint)it->second.color;
+}
+
+GLint APIENTRY glGetFragDataIndex(GLuint program, const GLchar* name) {
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return -1; }
+    if (!name) return -1;
+    auto it = p->frag_data.find(name);
+    return it == p->frag_data.end() ? -1 : (GLint)it->second.index;
+}
+
+// ---- uniform block introspection (S2) --------------------------------------
+
+GLuint APIENTRY glGetUniformBlockIndex(GLuint program,
+                                       const GLchar* uniformBlockName) {
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return GL_INVALID_INDEX; }
+    if (!p->linked || !uniformBlockName) return GL_INVALID_INDEX;
+    for (size_t i = 0; i < p->uniform_blocks.size(); ++i)
+        if (p->uniform_blocks[i].name == uniformBlockName) return (GLuint)i;
+    return GL_INVALID_INDEX;
+}
+
+void APIENTRY glGetActiveUniformBlockName(GLuint program,
+                                          GLuint uniformBlockIndex,
+                                          GLsizei bufSize, GLsizei* length,
+                                          GLchar* uniformBlockName) {
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (uniformBlockIndex >= p->uniform_blocks.size()) {
+        PUSH_ERROR(GL_INVALID_VALUE);
+        return;
+    }
+    const std::string& name = p->uniform_blocks[uniformBlockIndex].name;
+    if (uniformBlockName && bufSize > 0) {
+        GLsizei n = (GLsizei)name.size();
+        if (n > bufSize - 1) n = bufSize - 1;
+        std::memcpy(uniformBlockName, name.data(), (size_t)n);
+        uniformBlockName[n] = 0;
+        if (length) *length = n;
+    } else if (length) *length = 0;
+}
+
+void APIENTRY glGetActiveUniformBlockiv(GLuint program, GLuint uniformBlockIndex,
+                                        GLenum pname, GLint* params) {
+    if (!params) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (uniformBlockIndex >= p->uniform_blocks.size()) {
+        PUSH_ERROR(GL_INVALID_VALUE);
+        return;
+    }
+    const sh::UniformBlock& b = p->uniform_blocks[uniformBlockIndex];
+    switch (pname) {
+        case GL_UNIFORM_BLOCK_BINDING: *params = b.binding; break;
+        case GL_UNIFORM_BLOCK_DATA_SIZE: *params = b.data_size; break;
+        case GL_UNIFORM_BLOCK_NAME_LENGTH:
+            *params = (GLint)(b.name.size() + 1); break;
+        case GL_UNIFORM_BLOCK_ACTIVE_UNIFORMS:
+            *params = (GLint)b.members.size(); break;
+        case GL_UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES:
+            for (size_t i = 0; i < b.members.size(); ++i)
+                params[i] = b.members[i];
+            break;
+        case GL_UNIFORM_BLOCK_REFERENCED_BY_VERTEX_SHADER:
+            *params = b.referenced_by_vs ? GL_TRUE : GL_FALSE; break;
+        case GL_UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER:
+            *params = b.referenced_by_fs ? GL_TRUE : GL_FALSE; break;
+        default: PUSH_ERROR(GL_INVALID_ENUM);
+    }
+}
+
+void APIENTRY glUniformBlockBinding(GLuint program, GLuint uniformBlockIndex,
+                                    GLuint uniformBlockBinding) {
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (uniformBlockIndex >= p->uniform_blocks.size()) {
+        PUSH_ERROR(GL_INVALID_VALUE);
+        return;
+    }
+    p->uniform_blocks[uniformBlockIndex].binding = uniformBlockBinding;
+}
+
+void APIENTRY glGetUniformIndices(GLuint program, GLsizei uniformCount,
+                                  const GLchar* const* uniformNames,
+                                  GLuint* uniformIndices) {
+    if (uniformCount < 0 || (uniformCount > 0 && !uniformNames) ||
+        (uniformCount > 0 && !uniformIndices)) {
+        PUSH_ERROR(GL_INVALID_VALUE);
+        return;
+    }
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    for (GLsizei i = 0; i < uniformCount; ++i) {
+        const GLchar* name = uniformNames[i];
+        uniformIndices[i] = GL_INVALID_INDEX;
+        if (!name) continue;
+        auto it = p->uniform_by_name.find(name);
+        if (it == p->uniform_by_name.end() || it->second < 0) continue;
+        uniformIndices[i] = (GLuint)it->second;
+    }
+}
+
+void APIENTRY glGetActiveUniformName(GLuint program, GLuint uniformIndex,
+                                     GLsizei bufSize, GLsizei* length,
+                                     GLchar* uniformName) {
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (uniformIndex >= p->uniforms.size()) {
+        PUSH_ERROR(GL_INVALID_VALUE);
+        return;
+    }
+    const std::string& name = p->uniforms[uniformIndex].name;
+    if (uniformName && bufSize > 0) {
+        GLsizei n = (GLsizei)name.size();
+        if (n > bufSize - 1) n = bufSize - 1;
+        std::memcpy(uniformName, name.data(), (size_t)n);
+        uniformName[n] = 0;
+        if (length) *length = n;
+    } else if (length) *length = 0;
+}
+
+void APIENTRY glGetActiveUniformsiv(GLuint program, GLsizei uniformCount,
+                                    const GLuint* uniformIndices, GLenum pname,
+                                    GLint* params) {
+    if (uniformCount < 0 || (uniformCount > 0 && !uniformIndices) ||
+        (uniformCount > 0 && !params)) {
+        PUSH_ERROR(GL_INVALID_VALUE);
+        return;
+    }
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    for (GLsizei i = 0; i < uniformCount; ++i) {
+        GLuint idx = uniformIndices[i];
+        if (idx >= p->uniforms.size()) {
+            PUSH_ERROR(GL_INVALID_VALUE);
+            return;
+        }
+        const sh::Uniform& u = p->uniforms[idx];
+        switch (pname) {
+            case GL_UNIFORM_TYPE: params[i] = u.type; break;
+            case GL_UNIFORM_SIZE: params[i] = 1; break;
+            case GL_UNIFORM_NAME_LENGTH:
+                params[i] = (GLint)(u.name.size() + 1); break;
+            case GL_UNIFORM_BLOCK_INDEX: params[i] = u.block_index; break;
+            case GL_UNIFORM_OFFSET: params[i] = u.block_offset; break;
+            case GL_UNIFORM_ARRAY_STRIDE: params[i] = 0; break;
+            case GL_UNIFORM_MATRIX_STRIDE: params[i] = 0; break;
+            case GL_UNIFORM_IS_ROW_MAJOR: params[i] = GL_FALSE; break;
+            case GL_UNIFORM_ATOMIC_COUNTER_BUFFER_INDEX:
+                params[i] = -1; break;
+            default: PUSH_ERROR(GL_INVALID_ENUM); return;
+        }
+    }
+}
+
+// ---- transform feedback varying capture (S3) -------------------------------
+
+void APIENTRY glTransformFeedbackVaryings(GLuint program, GLsizei count,
+                                          const GLchar* const* varyings,
+                                          GLenum bufferMode) {
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (count < 0 || (count > 0 && !varyings)) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (bufferMode != GL_INTERLEAVED_ATTRIBS && bufferMode != GL_SEPARATE_ATTRIBS) {
+        PUSH_ERROR(GL_INVALID_ENUM);
+        return;
+    }
+    p->tfb_varyings.clear();
+    for (GLsizei i = 0; i < count; ++i)
+        if (varyings[i]) p->tfb_varyings.emplace_back(varyings[i]);
+    p->tfb_buffer_mode = bufferMode;
+}
+
+void APIENTRY glGetTransformFeedbackVarying(GLuint program, GLuint index,
+                                            GLsizei bufSize, GLsizei* length,
+                                            GLsizei* size, GLenum* type,
+                                            GLchar* name) {
+    auto* p = sh::GetProgram(program);
+    if (!p) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (index >= p->tfb_varyings.size()) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    const std::string& vname = p->tfb_varyings[index];
+    if (size) *size = 1;                 // single float per captured varying
+    if (type) *type = GL_FLOAT;
+    if (name && bufSize > 0) {
+        GLsizei n = (GLsizei)vname.size();
+        if (n > bufSize - 1) n = bufSize - 1;
+        std::memcpy(name, vname.data(), (size_t)n);
+        name[n] = 0;
+        if (length) *length = n;
+    } else if (length) *length = 0;
+}
+
 // ---- uniform setters -------------------------------------------------------
 
 namespace {

@@ -264,4 +264,34 @@ void APIENTRY glProvokingVertex(GLenum mode) {
     }
 }
 
+// ---- conditional rendering (S6) --------------------------------------------
+// MobileGL semantics: the whole conditional-render machinery is accepted but
+// never gates draws (the backend renders unconditionally). State is tracked
+// so glBegin/glEnd pairing rules are honoured.
+
+namespace {
+bool g_cond_render_active = false;
+}
+
+void APIENTRY glBeginConditionalRender(GLuint id, GLenum mode) {
+    switch (mode) {
+        case GL_QUERY_WAIT:
+        case GL_QUERY_NO_WAIT:
+        case GL_QUERY_BY_REGION_WAIT:
+        case GL_QUERY_BY_REGION_NO_WAIT:
+            break;
+        default:
+            PUSH_ERROR(GL_INVALID_ENUM);
+            return;
+    }
+    if (!Find(id)) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    if (g_cond_render_active) { PUSH_ERROR(GL_INVALID_OPERATION); return; }
+    g_cond_render_active = true;
+}
+
+void APIENTRY glEndConditionalRender(void) {
+    if (!g_cond_render_active) { PUSH_ERROR(GL_INVALID_OPERATION); return; }
+    g_cond_render_active = false;
+}
+
 } // extern "C"

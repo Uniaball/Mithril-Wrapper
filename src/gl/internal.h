@@ -49,6 +49,10 @@ struct AttribData {
     GLuint divisor = 0;        // glVertexAttribDivisor
     bool is_pointer = false;   // array (pointer) vs generic constant value
     std::array<GLfloat, 4> constant{0.0f, 0.0f, 0.0f, 1.0f};
+    // Stage F (S3): glVertexAttribI* keeps the exact integer constants so
+    // glGetVertexAttribIiv/Iuiv answer precisely (the float mirror above is
+    // what the draw path consumes).
+    std::array<GLint, 4> constant_i{0, 0, 0, 1};
 };
 
 struct VAOData {
@@ -69,6 +73,25 @@ extern GLuint g_bound_element_buffer;
 // GL program id -> Vulkan program handle (lazily created at first draw).
 extern std::unordered_map<GLuint, uint64_t> g_vk_programs;
 
+// ---- Stage F (S3): transform feedback CPU counting -------------------------
+// glBegin/EndTransformFeedback bracket a session; DrawCommon accumulates the
+// primitive count while active, and glEndTransformFeedback writes it into
+// the bound GL_TRANSFORM_FEEDBACK_BUFFER mirrors (CPU-side count, per the
+// degraded MobileGL-style contract). Storage lives in vertex.cpp.
+extern bool g_tfb_active;          // session open (Begin seen, End not yet)
+extern uint64_t g_tfb_primitives;  // primitives generated since Begin
+
+// glBindBufferBase/Range: target -> index -> bound buffer + range.
+// GL_TRANSFORM_FEEDBACK_BUFFER and GL_UNIFORM_BUFFER both land here.
+constexpr GLuint kMaxIndexedBindings = 64;
+struct IndexedBinding {
+    GLuint buffer = 0;
+    GLintptr offset = 0;
+    GLsizeiptr size = 0;   // -1 = whole buffer (BindBufferBase)
+};
+extern std::unordered_map<GLenum, std::array<IndexedBinding, kMaxIndexedBindings>>
+    g_indexed_bindings;
+
 // ---- shared texture state (texture.cpp owns the storage) ------------------
 
 // Mirrors the engine's texture-unit count (v::kMaxUnits); GL uses units
@@ -85,6 +108,10 @@ struct TexState {
     GLenum mag_filter = GL_LINEAR;
     GLenum wrap_s = GL_REPEAT, wrap_t = GL_REPEAT, wrap_r = GL_REPEAT;
     uint32_t width = 0, height = 0, depth = 1;  // depth: 3D z / array layers
+    // Stage F (S4): multisample textures are recorded (dims + sample count)
+    // but degrade to a single-sample CPU mirror at upload/FBO time.
+    GLint samples = 0;
+    GLboolean fixed_sample_locations = GL_FALSE;
     std::vector<std::vector<uint8_t>> mip;      // [level] slices concatenated
     bool has_image = false;                    // level 0 present
     // Compressed mirror: raw S3TC bytes per level (kept for GetCompressedTexImage).
@@ -101,7 +128,8 @@ struct TexState {
     size_t SliceCount() const {
         if (IsCube()) return 6;
         if (Is3D() || target == GL_TEXTURE_2D_ARRAY ||
-            target == GL_TEXTURE_1D_ARRAY)
+            target == GL_TEXTURE_1D_ARRAY ||
+            target == GL_TEXTURE_2D_MULTISAMPLE_ARRAY)
             return depth;
         return 1;
     }

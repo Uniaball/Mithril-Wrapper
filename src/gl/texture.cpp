@@ -515,7 +515,8 @@ void APIENTRY glBindTexture(GLenum target, GLuint texture) {
     bool valid = target == GL_TEXTURE_1D || target == GL_TEXTURE_2D ||
                  target == GL_TEXTURE_3D || target == GL_TEXTURE_CUBE_MAP ||
                  target == GL_TEXTURE_1D_ARRAY || target == GL_TEXTURE_2D_ARRAY ||
-                 target == GL_TEXTURE_BUFFER;
+                 target == GL_TEXTURE_BUFFER || target == GL_TEXTURE_2D_MULTISAMPLE ||
+                 target == GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
     if (!valid) { PUSH_ERROR(GL_INVALID_ENUM); return; }
     if (texture != 0 && !g_textures.count(texture)) {
         PUSH_ERROR(GL_INVALID_OPERATION);   // not a generated name
@@ -645,6 +646,59 @@ void APIENTRY glTexImage3D(GLenum target, GLint level, GLint internalformat,
         StoreSlices(st, (uint32_t)level, 0, st.depth, 0, 0, (uint32_t)width,
                     (uint32_t)height, format, type, pixels);
     if (level == 0) MarkTextureDirty(st, id);
+}
+
+// ---- multisample textures (S4) ---------------------------------------------
+// Degraded: multisample textures store dims + sample count for queries and
+// FBO attachment, but the engine images stay single-sample (the render
+// target hardware is still non-multisampled offscreen color).
+
+void TexImageMultisampleCommon(GLenum target, GLsizei samples,
+                               GLboolean fixedsamplelocations, GLsizei w,
+                               GLsizei h, GLsizei d) {
+    bool ok = target == GL_TEXTURE_2D_MULTISAMPLE ||
+              target == GL_TEXTURE_2D_MULTISAMPLE_ARRAY;
+    if (target == GL_TEXTURE_2D_MULTISAMPLE) ok = d == 1;
+    if (!ok) { PUSH_ERROR(GL_INVALID_ENUM); return; }
+    if (samples < 1 || w < 0 || h < 0 || d < 0) {
+        PUSH_ERROR(GL_INVALID_VALUE);
+        return;
+    }
+    GLuint id = ActiveBound();
+    if (!id) return;
+    TexState& st = g_textures[id];
+    st.width = (uint32_t)w;
+    st.height = (uint32_t)h;
+    st.depth = (uint32_t)d;
+    st.samples = samples;
+    st.fixed_sample_locations = fixedsamplelocations;
+    st.min_filter = st.mag_filter = GL_NEAREST;
+    st.has_image = w > 0 && h > 0;
+    st.mip.clear();
+    if (st.has_image) {
+        // Single-sample CPU mirror (zeroed) so FBO attachment + readback
+        // behave like a normal texture.
+        st.mip.push_back(std::vector<uint8_t>(st.SliceCount() * (size_t)w * h * 4, 0));
+        MarkTextureDirty(st, id);
+    }
+}
+
+void APIENTRY glTexImage2DMultisample(GLenum target, GLsizei samples,
+                                       GLenum internalformat, GLsizei width,
+                                       GLsizei height,
+                                       GLboolean fixedsamplelocations) {
+    (void)internalformat;
+    TexImageMultisampleCommon(target, samples, fixedsamplelocations, width,
+                              height, 1);
+}
+
+void APIENTRY glTexImage3DMultisample(GLenum target, GLsizei samples,
+                                       GLenum internalformat, GLsizei width,
+                                       GLsizei height, GLsizei depth,
+                                       GLboolean fixedsamplelocations) {
+    (void)internalformat;
+    TexImageMultisampleCommon(target, samples, fixedsamplelocations, width,
+                              height, depth);
 }
 
 void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint xoffset,

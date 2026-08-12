@@ -19,6 +19,7 @@ GL → Vulkan → Metal（MoltenVK），无 OpenGL ES 参与。
   - **MRT**：`src/gl/fbo.cpp` color[8] 多附件槽 + `glDrawBuffers`/`glDrawBuffer`/`glReadBuffer` 真实现；Vk 层 renderpass N 附件 + 附件 N 视图、pipeline `attachmentCount=附件数` 每附件独立 blend（draw_mask 未选型号清写掩码）、显式 clear 逐附件（仅 draw buffer 选中）、读回按 read_buf 挑附件。
   - **MSAA**：renderbuffer `samples>1` → `rasterizationSamples` + resolve 附件（单采样转储）、clear 写颜色与 resolve、读回 resolve 图；`ToVkSampleCount` 映射 1/2/4/8/16/32/64。
   - `tests/fbo_smoke.c` 29 行 ok（28 断言）：17 状态断言 + S5 FBO 纹理/RBO/blit + MRT 双附件读回与单 drawBuffer 门控 + MSAA 4x resolve 回读；八冒烟（contract/state/shader/draw/texture/fbo/3d/render3d）回归全过。
+- **M6 stage A 完成（帧环）**：双帧槽环形提交（`SubmitFlush`/`RetireFrame`/`RetireAllInflight`）、`glFinish`/`glFlush` 语义、逐帧读回缓冲；`tests/multiframe_smoke.c` 64 帧交替绘制红/蓝三角形（每帧重写 VBO），异步 flush + 每 7 帧同步 finish 交错，逐帧中心色 + 对侧暗双点读回，152 项断言全过——证明帧环不串 staging/描述符/UBO/顶点载荷。
 - **M6 stage B 完成：swapchain / present（CAMetalLayer → Metal）**：
   - `src/vk/swapchain.cpp`：`SetNativeLayer`（objc 校验 CAMetalLayer）→ 懒建 `VK_EXT_metal_surface` + `VK_KHR_swapchain`；`Present()` 工作线程/同步：acquire（image-available 信号量）→ 离屏 target blit 到 swapchain 图 → render-finished 信号量 → QueuePresent，fence 同步保单一多帧槽安全；OUT_OF_DATE 自重建；present 能力/队列校验；`mithril_has_swapchain` ABI 探针。
   - `src/vk/dispatch.cpp`：Apple 下启用 surface/metal_surface/portability_enumeration 实例扩展（含 `VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR`）+ swapchain 设备扩展，加载 WSI 入口；macOS loader 候选加 `libvulkan.dylib`。
@@ -40,6 +41,9 @@ GL → Vulkan → Metal（MoltenVK），无 OpenGL ES 参与。
   - 采样器状态与纹理解耦：GL sampler 对象经引擎常驻 `VkSampler` 表自拥采样器；引擎描述符绑定由 `(binding, tex_id)` 升级为 `(binding, sampler_id, tex_id)`（`src/vk/engine.h` 新增 `SamplerBind`）；绑定 sampler 对象时配对该 `VkSampler` 与纹理 image view，未绑定（`sampler_id==0`）时回退纹理自带 sampler（`glTexParameteri` 烘焙）。
   - 引擎新增 API：`UpdateSampler(uint64_t, const TexSamplerInfo&)`/`DestroyResidentSampler(uint64_t)`/`GetResidentSampler(uint64_t)`。
   - `tests/sampler_smoke.c` 全过（lavapipe：生命周期、bind 错误路径、参数往返、getter/setter 错误路径、绑定 sampler 对象渲染（NEAREST）vs 纹理回退、NEAREST/LINEAR 可观测差异、delete 解绑）。
+- **M6 stage F 完成（收尾 + 验收）：342/342 GL 符号全部转真（0 stub）**：
+  - S1 补 5（`glClearBuffer{fi,fv,iv,uiv}` + `glGetMultisamplefv`）、S2 补 11（fragData/uniform-block introspection）、S3 补 38（TransformFeedback CPU 计数 + 打包/整型常量 + point 参数）、S4 补 3（multisample texture）、S6 补 2（`glBegin/EndConditionalRender`，MobileGL 降级语义：校验配对/错误路径，不真正门控）；`gen_gl_stubs.py` 重新生成确认 0 stub。
+  - `tests/query_smoke.c` 补 ConditionalRender 6 断言（合法 begin/end、嵌套 begin、坏 mode/id、无 begin 直接 end）；回归十三冒烟全过。
 
 ## 快速构建（Linux 开发循环）
 
@@ -74,6 +78,8 @@ gcc -o tests/sync_smoke tests/sync_smoke.c -ldl -lm
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/sync_smoke     # M6 S6 GLsync 同步对象（需 lavapipe/loader）
 gcc -o tests/query_smoke tests/query_smoke.c -ldl
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/query_smoke   # M6 S6 查询对象 + primitive restart（需 lavapipe/loader）
+gcc -o tests/multiframe_smoke tests/multiframe_smoke.c -ldl -lm
+LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/multiframe_smoke # M6 帧环：交替绘制 + 逐帧读回（需 lavapipe/loader）
 gcc -o tests/sampler_smoke tests/sampler_smoke.c -ldl
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/sampler_smoke # M6 S6 sampler 对象生命周期 + 绑定/回退渲染（需 lavapipe/loader）
 python3 scripts/ppm_render.py tests/render3d.ppm tests/render3d.png # PPM→PNG
@@ -90,10 +96,10 @@ python3 scripts/ppm_render.py tests/render3d.ppm tests/render3d.png # PPM→PNG
 ## 目录结构
 ```
 src/egl     EGL 层（44 符号，display/config/context/surface 生命周期）
-src/gl      分发电层（exports.cpp 生成 + 按域拆分的真实现 state/shader/vertex/draw）
+src/gl      分发电层（exports.cpp 生成 + 按域拆分的真实现 state/shader/vertex/draw/texture/fbo/sync/query/sampler）
 src/shader  glslang GLSL→SPIR-V + SPIRV-Cross 反射（M2 完成）
 src/state   GL 状态引擎（Context 结构、错误队列、capability 表）
-src/vk      Vulkan 后端（dlsym 加载器、离屏渲染、动态 UBO 池、读回；engine/dispatch/target/swapchain/pipeline/fbo/draw 按域拆分）
+src/vk      Vulkan 后端（dlsym 加载器、离屏渲染、动态 UBO 池、读回；engine/dispatch/target/swapchain/pipeline/fbo/draw/query/texture 按域拆分）
 scripts/    gen_gl_stubs.py（stub 生成器）、exported_symbols.txt
-tests/      contract_smoke.c / state_smoke.c / shader_smoke.c / draw_smoke.c / texture_smoke.c / fbo_smoke.c / 3d_smoke.c / render3d_smoke.c / swapchain_smoke.c / sync_smoke.c / query_smoke.c / sampler_smoke.c
+tests/      contract_smoke.c / state_smoke.c / shader_smoke.c / draw_smoke.c / texture_smoke.c / fbo_smoke.c / 3d_smoke.c / render3d_smoke.c / multiframe_smoke.c / swapchain_smoke.c / sync_smoke.c / query_smoke.c / sampler_smoke.c
 ```
