@@ -523,6 +523,10 @@ bool CreateTarget();
 
 bool CreateDepthTarget();
 
+// Rebuild the offscreen target + default render pass with a new colour format
+// (swapchain format unification; see target.cpp).
+bool RecreateTargetForFormat(VkFormat fmt);
+
 void CreateDummyTexture();
 
 // Resolve the currently bound draw framebuffer's Vk resources, rebuilding

@@ -726,11 +726,26 @@ void ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, void* out) {
     if (width <= 0 || height <= 0) return;
     // Rows are copied upside-down to match GL's bottom-left framebuffer
     // origin (the Vulkan framebuffer has +Y down).
+    // When the default target was retargeted to a BGRA format (swapchain
+    // unification on MoltenVK surfaces), the readback bytes are B,G,R,A:
+    // swap R/B so glReadPixels keeps GL_RGBA semantics.
+    const bool bgra = g.format == VK_FORMAT_B8G8R8A8_UNORM ||
+                      g.format == VK_FORMAT_B8G8R8A8_SRGB;
     for (GLsizei row = 0; row < height; ++row) {
-        std::memcpy(reinterpret_cast<uint8_t*>(out) + (size_t)row * width * 4,
-                    g.readback_map +
-                        ((size_t)(g.read_h - 1 - (y + row)) * g.read_w + x) * 4,
-                    (size_t)width * 4);
+        uint8_t* dst = reinterpret_cast<uint8_t*>(out) + (size_t)row * width * 4;
+        const uint8_t* src =
+            g.readback_map +
+            ((size_t)(g.read_h - 1 - (y + row)) * g.read_w + x) * 4;
+        if (bgra) {
+            for (GLsizei i = 0; i < width; ++i) {
+                dst[i * 4 + 0] = src[i * 4 + 2];  // R
+                dst[i * 4 + 1] = src[i * 4 + 1];  // G
+                dst[i * 4 + 2] = src[i * 4 + 0];  // B
+                dst[i * 4 + 3] = src[i * 4 + 3];  // A
+            }
+        } else {
+            std::memcpy(dst, src, (size_t)width * 4);
+        }
     }
 }
 } // namespace mithril::vk

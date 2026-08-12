@@ -294,4 +294,38 @@ bool CreateTarget() {
 // Pipelines
 // ---------------------------------------------------------------------------
 
+// Rebuild the offscreen render target (image/view/framebuffer + render pass)
+// with a new colour format. Used by the swapchain path: MoltenVK's
+// CAMetalLayer surfaces advertise B8G8R8A8 (BGRA) formats, while the offscreen
+// target starts as R8G8B8A8_UNORM. vkCmdBlitImage with FILTER_LINEAR requires
+// identical src/dst formats (VUID-vkCmdBlitImage-srcImage-00229), and MoltenVK
+// cannot channel-remap a cross-format blit (Metal's blit encoder copies bytes),
+// so target and swapchain must share one format for present to work. The
+// default-framebuffer target is the only thing that uses g.format; textures,
+// FBO attachments and depth are independent and stay untouched.
+bool RecreateTargetForFormat(VkFormat fmt) {
+    if (g.format == fmt) return true;
+    // No in-flight frame may still reference the images we are about to free.
+    RetireAllInflight();
+    g.fn.DestroyFramebuffer(g.device, g.target_fb, nullptr);
+    g.fn.DestroyImageView(g.device, g.target_view, nullptr);
+    g.fn.DestroyImage(g.device, g.target_image, nullptr);
+    g.fn.FreeMemory(g.device, g.target_mem, nullptr);
+    g.target_fb = VK_NULL_HANDLE;
+    g.target_view = VK_NULL_HANDLE;
+    g.target_image = VK_NULL_HANDLE;
+    g.target_mem = VK_NULL_HANDLE;
+    // The default render pass embeds the colour format; rebuild it too.
+    g.fn.DestroyRenderPass(g.device, g.renderpass, nullptr);
+    g.renderpass = VK_NULL_HANDLE;
+    g.format = fmt;
+    if (!CreateRenderPass()) return false;
+    if (!CreateTarget()) return false;
+    g.target_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    // Pipelines cached against the old default render pass / attachment format
+    // are stale; they rebuild lazily on the next draw.
+    g_pipelines.clear();
+    return true;
+}
+
 } // namespace mithril::vk

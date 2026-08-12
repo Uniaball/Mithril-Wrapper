@@ -78,14 +78,13 @@ static bool EnsureSwapchain() {
     if (npm) g.fn.GetPhysicalDeviceSurfacePresentModesKHR(g.physical, surface, &npm,
                                                           modes.data());
 
-    // The offscreen render target is fixed at VK_FORMAT_R8G8B8A8_UNORM
-    // (internal.h). vkCmdBlitImage with FILTER_LINEAR requires src/dst to
-    // share the same format (VUID-vkCmdBlitImage-srcImage-00229), so the
-    // swapchain format must match. Pick R8G8B8A8_UNORM + sRGB colorspace
-    // when the surface exposes it; otherwise fall back to the first
-    // surface format and warn (blit stays legal only if it happens to be
-    // R8G8B8A8_UNORM too -- a mismatch is logged so the offscreen format
-    // can be retargeted if a device truly lacks R8G8B8A8_UNORM).
+    // Pick a surface format. The offscreen target starts as R8G8B8A8_UNORM
+    // and vkCmdBlitImage with FILTER_LINEAR requires src/dst to share the
+    // same format (VUID-vkCmdBlitImage-srcImage-00229), so prefer
+    // R8G8B8A8_UNORM when the surface exposes it; otherwise take the first
+    // surface format and retarget the offscreen target to match (MoltenVK
+    // CAMetalLayer surfaces commonly only advertise B8G8R8A8, and Metal's
+    // blit encoder cannot channel-remap a cross-format copy).
     VkSurfaceFormatKHR fmt{};
     if (nfmt == 0) return false;
     fmt = fmts[0];
@@ -97,8 +96,12 @@ static bool EnsureSwapchain() {
         }
     }
     if (fmt.format != g.format) {
-        ML_LOG_WARN("vk: swapchain format %u != target format %u; blit may be invalid",
+        ML_LOG_WARN("vk: swapchain format %u != target format %u; retargeting offscreen target",
                     (unsigned)fmt.format, (unsigned)g.format);
+        if (!RecreateTargetForFormat(fmt.format)) {
+            ML_LOG_ERROR("vk: failed to retarget offscreen target to swapchain format");
+            return false;
+        }
     }
 
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
@@ -331,15 +334,12 @@ bool Present() {
     blit.dstOffsets[0] = {0, 0, 0};
     blit.dstOffsets[1] = {(int32_t)g.swap.extent.width,
                           (int32_t)g.swap.extent.height, 1};
-    // NEAREST: the spec only permits cross-format blits with NEAREST (VUID-
-    // vkCmdBlitImage-srcImage-00229). The offscreen target is R8G8B8A8_UNORM
-    // while MoltenVK's CAMetalLayer surface commonly forces B8G8R8A8_UNORM,
-    // so FILTER_LINEAR would be invalid. At 1:1 extent NEAREST is visually
-    // identical; on size mismatch it is pixelated but correct (no R/B swap:
-    // MoltenVK handles the channel mapping in the blit).
+    // Same-format blit (the target was retargeted to the swapchain format
+    // above when needed), so FILTER_LINEAR is spec-legal and the scaler keeps
+    // full quality on size mismatch.
     g.fn.CmdBlitImage(g.cmd, g.target_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                       g.swap.images[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-                      &blit, VK_FILTER_NEAREST);
+                      &blit, VK_FILTER_LINEAR);
 
     // swapchain: TRANSFER_DST -> PRESENT_SRC
     VkImageMemoryBarrier ps_bar{dst_bar};
@@ -373,7 +373,10 @@ bool Present() {
     si.pCommandBuffers = &g.cmd;
     si.signalSemaphoreCount = 1;
     si.pSignalSemaphores = &g.swap.render_finished[idx];
-    g.fn.QueueSubmit(g.queue, 1, &si, g.fence);
+    if (g.fn.QueueSubmit(g.queue, 1, &si, g.fence) != VK_SUCCESS) {
+        ML_LOG_ERROR("vk: QueueSubmit (blit) failed; present will fail too");
+        return false;
+    }
 
     VkPresentInfoKHR pi{};
     pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -382,8 +385,9 @@ bool Present() {
     pi.swapchainCount = 1;
     pi.pSwapchains = &g.swap.handle;
     pi.pImageIndices = &idx;
-    if (g.fn.QueuePresentKHR(g.queue, &pi) != VK_SUCCESS) {
-        ML_LOG_ERROR("vk: QueuePresentKHR failed");
+    VkResult pr = g.fn.QueuePresentKHR(g.queue, &pi);
+    if (pr != VK_SUCCESS) {
+        ML_LOG_ERROR("vk: QueuePresentKHR failed (0x%x)", (unsigned)pr);
         return false;
     }
     // Present is synchronous for milestone safety: wait so the blit buffer's
