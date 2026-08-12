@@ -18,6 +18,10 @@ bool IsInitialized() { return g.initialized; }
 bool SetTargetSize(uint32_t w, uint32_t h) {
     if (!g.initialized) return false;
     if (w == g.width && h == g.height) return true;
+    // The old target may still be referenced by an in-flight frame (async
+    // flush); destroying it now hands the GPU freed images -> MoltenVK
+    // Invalid Resource -> device lost.
+    RetireAllInflight();
     g.fn.DestroyFramebuffer(g.device, g.target_fb, nullptr);
     g.fn.DestroyImageView(g.device, g.target_view, nullptr);
     g.fn.DestroyImage(g.device, g.target_image, nullptr);

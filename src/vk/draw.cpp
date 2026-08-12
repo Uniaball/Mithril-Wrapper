@@ -648,6 +648,13 @@ void SubmitFlush(bool wait) {
 
     // (Re)size the readback buffer to the read target.
     if (g.read_w != rw || g.read_h != rh) {
+        // The previous readback may still be the target of an in-flight
+        // CmdCopyImageToBuffer (async-flushed frames). Destroying it now would
+        // hand the GPU a freed buffer -> MoltenVK Invalid Resource -> device
+        // lost. This is exactly the retarget case: the first frame renders
+        // 512x512, the swapchain then retargets to 1827x844, and the next
+        // SubmitFlush hits a size change while frame 1 is still on the queue.
+        RetireAllInflight();
         if (g.readback) {
             g.fn.UnmapMemory(g.device, g.readback_mem);
             g.fn.DestroyBuffer(g.device, g.readback, nullptr);
