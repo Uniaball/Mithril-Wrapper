@@ -249,8 +249,18 @@ EGLBoolean eglDestroySurface(EGLDisplay dpy, EGLSurface surface) {
 
 EGLBoolean eglQuerySurface(EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint* value) {
     switch (attribute) {
-        case EGL_WIDTH: *value = (EGLint)vk::PresentWidth(); break;
-        case EGL_HEIGHT: *value = (EGLint)vk::PresentHeight(); break;
+        case EGL_WIDTH:
+        case EGL_HEIGHT:
+            // Bring the swapchain up eagerly (when a native layer exists) so
+            // the very first size query -- which Minecraft uses to lay out its
+            // viewport and framebuffers -- returns the real presented size
+            // instead of the 512x512 default target. Without this the game
+            // sizes itself 512x512 and renders into the top-left corner of
+            // the real (e.g. 1827x844) surface.
+            vk::EnsurePresentReady();
+            *value = (attribute == EGL_WIDTH) ? (EGLint)vk::PresentWidth()
+                                              : (EGLint)vk::PresentHeight();
+            break;
         default:
             SetError(EGL_BAD_ATTRIBUTE);
             return EGL_FALSE;

@@ -220,7 +220,7 @@ struct FboObj {
     bool has_depth = false;
     FboSlot depth;                 // depth/stencil attachment
     VkFormat color_fmt = VK_FORMAT_R8G8B8A8_UNORM;
-    VkFormat depth_fmt = VK_FORMAT_D24_UNORM_S8_UINT;
+    VkFormat depth_fmt = VK_FORMAT_D32_SFLOAT_S8_UINT;  // matches default depth_format
     uint32_t samples = 1;
     uint32_t width = 0, height = 0;
     VkImageView depth_view = VK_NULL_HANDLE;
@@ -395,8 +395,12 @@ struct Engine {
     VkImageView target_view = VK_NULL_HANDLE;
     VkFramebuffer target_fb = VK_NULL_HANDLE;
     VkImageLayout target_layout = VK_IMAGE_LAYOUT_UNDEFINED;
-    // M5: depth attachment for the default framebuffer (D24S8).
-    VkFormat depth_format = VK_FORMAT_D24_UNORM_S8_UINT;
+    // M5: depth attachment for the default framebuffer. D32_SFLOAT_S8_UINT is
+    // universally supported on Apple silicon / A-series GPUs, while
+    // D24_UNORM_S8_UINT is not (MoltenVK logged FORMAT_NOT_SUPPORTED on the
+    // iPhone X A11 and silently substituted D32S8, leaving image/view/render
+    // pass formats inconsistent).
+    VkFormat depth_format = VK_FORMAT_D32_SFLOAT_S8_UINT;
     VkImage depth_image = VK_NULL_HANDLE;
     VkDeviceMemory depth_mem = VK_NULL_HANDLE;
     VkImageView depth_view = VK_NULL_HANDLE;

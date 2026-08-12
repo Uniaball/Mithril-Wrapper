@@ -245,6 +245,14 @@ void SetVsync(bool enable);
 // finished frame into it, queue the present. False when no swapchain (Linux).
 bool Present();
 
+// Bring up the backend + swapchain eagerly so surface queries (EGL_WIDTH /
+// EGL_HEIGHT) return the real presentation size instead of the 512x512
+// default target. Minecraft queries the window size at boot and lays out its
+// viewport/framebuffers from it; without this the first-present swapchain
+// (e.g. 1827x844 on an iPhone X) appears only after the game sized itself
+// 512x512, leaving everything in the top-left corner.
+bool EnsurePresentReady();
+
 // Presented surface size (offscreen target size when no swapchain).
 uint32_t PresentWidth();
 uint32_t PresentHeight();

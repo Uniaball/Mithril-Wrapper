@@ -507,11 +507,21 @@ void SubmitFlush(bool wait) {
         rbi.renderArea = {{0, 0}, {pw, ph}};
         g.fn.CmdBeginRenderPass(frame.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
 
+        // GL viewport origin is bottom-left; Vulkan's is top-left, so flip Y.
+        // (The scissor path below already does the same ph - y - h flip.)
+        // Clamp the GL rect into the target first: viewports that extend past
+        // the framebuffer (e.g. the untouched default 512x512 viewport against
+        // a smaller FBO) would otherwise produce a negative Vulkan Y and push
+        // the whole draw off-screen.
         VkViewport vp{};
-        vp.x = g.vp_x;
-        vp.y = g.vp_y;
-        vp.width = std::min<float>(g.vp_w, pw);
-        vp.height = std::min<float>(g.vp_h, ph);
+        const float gl_w = std::min<float>(g.vp_w, pw);
+        const float gl_h = std::min<float>(g.vp_h, ph);
+        const float gl_x = std::max<float>(g.vp_x, 0.f);
+        const float gl_y = std::max<float>(g.vp_y, 0.f);
+        vp.x = gl_x;
+        vp.y = ph - (gl_y + gl_h);
+        vp.width = gl_w;
+        vp.height = gl_h;
         vp.minDepth = 0.f;
         vp.maxDepth = 1.f;
         g.fn.CmdSetViewport(frame.cmd, 0, 1, &vp);

@@ -240,6 +240,15 @@ void SetVsync(bool enable) {
     g.vsync = enable;
 }
 
+bool EnsurePresentReady() {
+    if (!EnsureInit()) return false;
+#ifdef VK_USE_PLATFORM_METAL_EXT
+    return g.native_layer ? EnsureSwapchain() : true;
+#else
+    return true;
+#endif
+}
+
 bool Present() {
     // Lazy engine boot: eglSwapBuffers is the first device-touching call when
     // an app swaps without drawing (cleanup frames), so spin the engine up here.
