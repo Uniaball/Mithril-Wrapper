@@ -182,12 +182,22 @@ v::PipelineState BuildPipelineState() {
     return ps;
 }
 
-// Fetch `size` components of attribute `a` for source buffer row `row`.
-// Applies buffer lookup, stride, type size, normalization, half/double
-// conversion, or the generic constant when the array is disabled/unbound.
-bool FetchAttribRow(const AttribData& a, GLint row, GLfloat* out) {
+// Fetch `size` components of attribute `a` for source buffer row `row` into
+// 32-bit bit patterns matching the shader input kind: 0 = float bits,
+// 1 = sign-extended int32, 2 = zero-extended uint32. Integral sources keep
+// their exact integer values (a float round-trip would lose precision above
+// 2^24); float/half/double sources truncate to the integral kind per GL's
+// float->int conversion rule.
+bool FetchAttribRowBits(const AttribData& a, GLint row, uint8_t kind,
+                        uint32_t* out) {
     if (!a.is_pointer || a.buffer == 0) {
-        for (GLuint i = 0; i < (GLuint)a.size; ++i) out[i] = a.constant[i];
+        for (GLuint i = 0; i < (GLuint)a.size; ++i) {
+            if (kind == 0) {
+                std::memcpy(&out[i], &a.constant[i], 4);
+            } else {
+                out[i] = (uint32_t)a.constant_i[i];
+            }
+        }
         return true;
     }
     if (row < 0) return false;
@@ -197,12 +207,45 @@ bool FetchAttribRow(const AttribData& a, GLint row, GLfloat* out) {
     GLsizei src_stride = a.stride ? a.stride : (GLsizei)(a.size * type_sz);
     size_t src = (size_t)a.offset + (size_t)row * src_stride;
     if (src + (size_t)a.size * type_sz > bit->second.data.size()) return false;
-    FetchComponents(bit->second.data.data() + src, a.type, a.normalized, out,
-                    (GLuint)a.size);
+    const uint8_t* p = bit->second.data.data() + src;
+    if (kind == 0) {
+        float comps[4];
+        FetchComponents(p, a.type, a.normalized, comps, (GLuint)a.size);
+        for (GLuint i = 0; i < (GLuint)a.size; ++i)
+            std::memcpy(&out[i], &comps[i], 4);
+        return true;
+    }
+    // Integral kind. Normalized data is converted to float and then truncated
+    // back to an integer (GL semantics); raw integral sources keep their bits.
+    if (a.normalized) {
+        float comps[4];
+        FetchComponents(p, a.type, a.normalized, comps, (GLuint)a.size);
+        for (GLuint i = 0; i < (GLuint)a.size; ++i) {
+            float f = comps[i];
+            out[i] = kind == 1 ? (uint32_t)(int32_t)f : (uint32_t)f;
+        }
+        return true;
+    }
+    for (GLuint i = 0; i < (GLuint)a.size; ++i) {
+        int64_t v = 0;
+        switch (a.type) {
+            case GL_BYTE:            v = (int8_t)p[i]; break;
+            case GL_UNSIGNED_BYTE:   v = p[i]; break;
+            case GL_SHORT:           v = ((const int16_t*)p)[i]; break;
+            case GL_UNSIGNED_SHORT:  v = ((const uint16_t*)p)[i]; break;
+            case GL_INT:             v = ((const int32_t*)p)[i]; break;
+            case GL_UNSIGNED_INT:    v = (uint32_t)((const uint32_t*)p)[i]; break;
+            case GL_FLOAT:           v = (int64_t)((const float*)p)[i]; break;
+            case GL_HALF_FLOAT:      v = (int64_t)HalfToFloat(((const uint16_t*)p)[i]); break;
+            case GL_DOUBLE:          v = (int64_t)((const double*)p)[i]; break;
+            default:                 v = 0; break;
+        }
+        out[i] = kind == 1 ? (uint32_t)(int32_t)v : (uint32_t)v;
+    }
     return true;
 }
 
-// Core draw: resolve the current VAO into float32 streams and hand them to
+// Core draw: resolve the current VAO into 4-byte-unit streams and hand them to
 // the Vulkan backend. `idx` holds raw indices (glDrawElements path); when
 // empty, `first`/`count` describe a glDrawArrays-style range and `base_vertex`
 // is ignored.
@@ -256,6 +299,14 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
             va.location = slot;
             va.components = (uint32_t)vao.attribs[slot].size;
             va.offset = off;
+            // Match the vertex input format to the shader's declared input
+            // kind (0=float, 1=int, 2=uint). Without this, integer shader
+            // inputs get an SFLOAT vertex format and MoltenVK refuses to
+            // compile the pipeline ("Cannot convert attribute from
+            // MTLAttributeFormatFloat2 to int2 or uint2."), dropping every
+            // draw of that program -- the world renders as a flat colour.
+            auto kit = prog->attrib_kinds.find((GLint)slot);
+            va.kind = kit == prog->attrib_kinds.end() ? 0 : (uint8_t)kit->second;
             off += (uint32_t)vao.attribs[slot].size * 4;
             vstream.attrs.push_back(va);
         }
@@ -265,14 +316,15 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
             size_t rec = (size_t)i * off / 4;
             for (size_t k = 0; k < vertex_slots.size(); ++k) {
                 const AttribData& a = vao.attribs[vertex_slots[k]];
-                float comps[4];
-                if (!FetchAttribRow(a, row_base + i, comps)) {
+                uint32_t comps[4];
+                if (!FetchAttribRowBits(a, row_base + i, vstream.attrs[k].kind,
+                                        comps)) {
                     PUSH_ERROR(GL_INVALID_OPERATION);
                     return;
                 }
                 size_t dst = rec + vstream.attrs[k].offset / 4;
                 for (uint32_t c = 0; c < (uint32_t)a.size; ++c)
-                    verts[dst + c] = comps[c];
+                    std::memcpy(&verts[dst + c], &comps[c], 4);
             }
         }
         vstream.data = std::move(verts);
@@ -289,6 +341,8 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
             v::VertexAttr va;
             va.location = slot;
             va.components = (uint32_t)vao.attribs[slot].size;
+            auto kit = prog->attrib_kinds.find((GLint)slot);
+            va.kind = kit == prog->attrib_kinds.end() ? 0 : (uint8_t)kit->second;
             istream.attrs.push_back(va);
         }
         // Pack one record per instance: instance i reads attribute buffer
@@ -306,14 +360,15 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
             size_t rec = (size_t)i * ioff / 4;
             for (size_t k = 0; k < instance_slots.size(); ++k) {
                 const AttribData& a = vao.attribs[instance_slots[k]];
-                float comps[4];
-                if (!FetchAttribRow(a, src_row, comps)) {
+                uint32_t comps[4];
+                if (!FetchAttribRowBits(a, src_row, istream.attrs[k].kind,
+                                        comps)) {
                     PUSH_ERROR(GL_INVALID_OPERATION);
                     return;
                 }
                 size_t dst = rec + istream.attrs[k].offset / 4;
                 for (uint32_t c = 0; c < (uint32_t)a.size; ++c)
-                    inst[dst + c] = comps[c];
+                    std::memcpy(&inst[dst + c], &comps[c], 4);
             }
         }
         istream.data = std::move(inst);

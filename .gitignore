@@ -19,6 +19,7 @@ tests/sync_smoke
 tests/query_smoke
 tests/sampler_smoke
 tests/swapchain_smoke
+tests/intattr_smoke
 tests/render3d.ppm
 tests/render3d.png
 

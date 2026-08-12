@@ -585,7 +585,9 @@ std::string BuildPipelineKey(uint64_t program, uint32_t topology,
 // stencil/color-mask/scissor/mode). Appended to the geometry key.
 std::string StateSignature(const PipelineState& ps);
 
-VkFormat AttrFormat(uint32_t components);
+// Map a vertex attribute (component count + shader input kind: 0=float,
+// 1=int, 2=uint) to the matching R32* vertex-input format.
+VkFormat AttrFormat(uint32_t components, uint8_t kind);
 
 VkPipeline GetOrCreatePipeline(const Program& prog, const DrawOp& op);
 

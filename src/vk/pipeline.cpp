@@ -131,22 +131,35 @@ std::string BuildPipelineKey(uint64_t program, uint32_t topology,
                       "|V" + std::to_string(v_stride);
     for (const auto& a : v_attrs)
         key += "|" + std::to_string(a.location) + "@" +
-               std::to_string(a.offset) + ":" + std::to_string(a.components);
+               std::to_string(a.offset) + ":" + std::to_string(a.components) +
+               "k" + std::to_string(a.kind);
     if (!i_attrs.empty()) {
         key += "|I" + std::to_string(i_stride);
         for (const auto& a : i_attrs)
             key += "|" + std::to_string(a.location) + "@" +
-                   std::to_string(a.offset) + ":" + std::to_string(a.components);
+                   std::to_string(a.offset) + ":" + std::to_string(a.components) +
+                   "k" + std::to_string(a.kind);
     }
     return key;
 }
 
-VkFormat AttrFormat(uint32_t components) {
+VkFormat AttrFormat(uint32_t components, uint8_t kind) {
+    const bool sint = kind == 1, uint = kind == 2;
     switch (components) {
-        case 1: return VK_FORMAT_R32_SFLOAT;
-        case 2: return VK_FORMAT_R32G32_SFLOAT;
-        case 3: return VK_FORMAT_R32G32B32_SFLOAT;
-        default: return VK_FORMAT_R32G32B32A32_SFLOAT;
+        case 1:
+            return sint ? VK_FORMAT_R32_SINT
+                        : uint ? VK_FORMAT_R32_UINT : VK_FORMAT_R32_SFLOAT;
+        case 2:
+            return sint ? VK_FORMAT_R32G32_SINT
+                        : uint ? VK_FORMAT_R32G32_UINT : VK_FORMAT_R32G32_SFLOAT;
+        case 3:
+            return sint ? VK_FORMAT_R32G32B32_SINT
+                        : uint ? VK_FORMAT_R32G32B32_UINT
+                               : VK_FORMAT_R32G32B32_SFLOAT;
+        default:
+            return sint ? VK_FORMAT_R32G32B32A32_SINT
+                        : uint ? VK_FORMAT_R32G32B32A32_UINT
+                               : VK_FORMAT_R32G32B32A32_SFLOAT;
     }
 }
 
@@ -187,7 +200,7 @@ VkPipeline GetOrCreatePipeline(const Program& prog, const DrawOp& op) {
         VkVertexInputAttributeDescription d{};
         d.location = a.location;
         d.binding = 0;
-        d.format = AttrFormat(a.components);
+        d.format = AttrFormat(a.components, a.kind);
         d.offset = a.offset;
         fa.push_back(d);
     }
@@ -195,7 +208,7 @@ VkPipeline GetOrCreatePipeline(const Program& prog, const DrawOp& op) {
         VkVertexInputAttributeDescription d{};
         d.location = a.location;
         d.binding = 1;
-        d.format = AttrFormat(a.components);
+        d.format = AttrFormat(a.components, a.kind);
         d.offset = a.offset;
         fa.push_back(d);
     }

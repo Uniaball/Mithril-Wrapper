@@ -37,13 +37,19 @@ enum class Topology {
 // One enabled vertex location inside a stream.
 struct VertexAttr {
     uint32_t location = 0;    // GL attribute location
-    uint32_t components = 0;  // 1..4 (staged as float32)
+    uint32_t components = 0;  // 1..4 (staged as 4-byte units)
     uint32_t offset = 0;      // byte offset within one interleaved record
+    // Shader input kind for this location: 0 = float, 1 = int, 2 = uint
+    // (mirrors sh::Program::attrib_kinds). The pipeline's vertex-input format
+    // must match it -- MoltenVK refuses to compile a pipeline whose
+    // MTLAttributeFormat is FloatN while the MSL vertex input is intN/uintN.
+    uint8_t kind = 0;
 };
 
-// Interleaved float32 payload; every component is already converted on the
-// CPU side (normalization, half/double->float), so the engine only sees
-// R32G32B32A32-style formats.
+// Interleaved 4-byte-unit payload; every component is already converted on the
+// CPU side (normalization, half/double->float, or kept as an int32/uint32 bit
+// pattern when the shader input is integral), so the engine only sees
+// R32G32B32A32-style formats whose numeric kind matches `kind`.
 struct VertexStream {
     std::vector<float> data;       // empty => no stream
     uint32_t stride = 0;           // bytes per record
