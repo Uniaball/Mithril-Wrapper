@@ -82,7 +82,7 @@ static VkRenderPass BuildFboPass(const std::string& sig, size_t n_color,
         d.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         d.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         d.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-        d.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        d.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
         d.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         d.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         att.push_back(d);

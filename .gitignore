@@ -17,6 +17,8 @@ tests/render3d_smoke
 tests/multiframe_smoke
 tests/sync_smoke
 tests/query_smoke
+tests/sampler_smoke
+tests/swapchain_smoke
 tests/render3d.ppm
 tests/render3d.png
 

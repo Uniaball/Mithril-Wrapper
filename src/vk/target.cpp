@@ -150,8 +150,11 @@ bool CreateRenderPass() {
     // color attachment's explicit clear), so the render pass must LOAD it.
     att[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     att[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    // Stencil MUST be stored: GL stencil contents persist across draws until
+    // cleared, and frames here are separate render passes (lavapipe keeps the
+    // data anyway; MoltenVK honours STORE_OP_DONT_CARE and discards it).
     att[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
     att[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     att[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
