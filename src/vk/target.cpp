@@ -329,6 +329,8 @@ bool RecreateTargetForFormat(VkFormat fmt) {
     // contents undefined (observed as a solid-colour screen on device).
     // EnsureInit does the same one-shot transition for the initial target.
     {
+        // g.cmd/g.fence are shared with texture uploads and Present's blit.
+        std::lock_guard<std::mutex> aux_lock(g_aux_mutex);
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;

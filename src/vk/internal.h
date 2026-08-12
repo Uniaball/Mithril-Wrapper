@@ -13,6 +13,7 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -489,6 +490,14 @@ struct Engine {
 extern Engine g;
 extern std::unordered_map<uint64_t, Program> g_programs;
 extern std::unordered_map<std::string, VkPipeline> g_pipelines;
+
+// Guards the auxiliary one-shot command buffer + fence (g.cmd / g.fence).
+// Those two handles are shared by texture uploads (Worker threads while MC
+// builds atlases), Present()'s blit and one-shot layout transitions (Render
+// thread). Without a lock two threads can concurrently ResetCommandBuffer /
+// QueueSubmit the same command buffer, which MoltenVK observes as an invalid
+// resource and kills the device with kIOGPUCommandBufferCallbackErrorInvalidResource.
+extern std::mutex g_aux_mutex;
 
 // ---- shared helpers (defined in target.cpp) ------------------------------
 

@@ -520,6 +520,9 @@ void BlitFramebuffer(uint64_t src_fbo, uint64_t dst_fbo,
     GLint d_w = std::abs(dstX1 - dstX0);
     GLint d_h = std::abs(dstY1 - dstY0);
 
+    // g.cmd/g.fence are shared with texture uploads and Present's blit.
+    std::lock_guard<std::mutex> aux_lock(g_aux_mutex);
+
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;

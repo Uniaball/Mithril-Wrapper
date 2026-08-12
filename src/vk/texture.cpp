@@ -89,9 +89,21 @@ void UploadImageData(VkImage image, const TexUpload& img) {
         g.fn.UnmapMemory(g.device, staging_mem);
     }
 
+    // g.cmd/g.fence are shared with Present()'s blit and one-shot transitions,
+    // and MC uploads textures from worker threads while the render thread
+    // presents. Serialise the whole record+submit+wait so two threads never
+    // reset/queue the same command buffer concurrently (that kills the device
+    // on MoltenVK: Invalid Resource -> VK_ERROR_OUT_OF_DEVICE_MEMORY).
+    std::lock_guard<std::mutex> aux_lock(g_aux_mutex);
+
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    // g.cmd is shared and left EXECUTABLE after the previous user (Present's
+    // blit, a BlitFramebuffer, a layout transition); it must be reset before
+    // re-beginning or BeginCommandBuffer fails and the upload silently dies
+    // (textures then sample as empty -> missing UI/text on screen).
+    g.fn.ResetCommandBuffer(g.cmd, 0);
     if (g.fn.BeginCommandBuffer(g.cmd, &bi) != VK_SUCCESS) {
         g.fn.DestroyBuffer(g.device, staging, nullptr);
         g.fn.FreeMemory(g.device, staging_mem, nullptr);

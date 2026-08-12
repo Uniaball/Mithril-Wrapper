@@ -11,6 +11,7 @@ namespace mithril::vk {
 Engine g;
 std::unordered_map<uint64_t, Program> g_programs;
 std::unordered_map<std::string, VkPipeline> g_pipelines;
+std::mutex g_aux_mutex;
 
 bool IsInitialized() { return g.initialized; }
 

@@ -338,6 +338,10 @@ bool Present() {
 
     // Swapchain image to a copyable layout, then blit the finished offscreen
     // target into it; hand it to the WSI in PRESENT_SRC.
+    // g.cmd/g.fence are shared with texture uploads (worker threads) and
+    // one-shot transitions -- serialise record+submit+wait like UploadImageData.
+    std::lock_guard<std::mutex> aux_lock(g_aux_mutex);
+
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;

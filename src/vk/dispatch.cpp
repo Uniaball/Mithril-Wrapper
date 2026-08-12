@@ -417,6 +417,7 @@ bool EnsureInit() {
 
     // Bring the fresh image to COLOR_ATTACHMENT_OPTIMAL.
     {
+        std::lock_guard<std::mutex> aux_lock(g_aux_mutex);
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
