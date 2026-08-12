@@ -215,6 +215,12 @@ EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config,
     globals().surface.is_window = true;
     globals().surface.swap_interval = 1;
     vk::SetNativeLayer((void*)win);
+    // Bring the swapchain up right away (when the layer is valid) so the
+    // surface size -- which Minecraft reads at boot to size its viewport and
+    // framebuffers -- is the real presented size from the very start, not the
+    // 512x512 default target. eglQuerySurface may never be called (SDL3 sizes
+    // its window from the layer directly), so this is the reliable hook.
+    vk::EnsurePresentReady();
     ML_LOG_DEBUG("eglCreateWindowSurface(win=%p)", (void*)win);
     SetError(EGL_SUCCESS);
     return reinterpret_cast<EGLSurface>(&globals().surface);
@@ -227,6 +233,7 @@ EGLSurface eglCreatePlatformWindowSurface(EGLDisplay dpy, EGLConfig config, void
     globals().surface.is_window = true;
     globals().surface.swap_interval = 1;
     vk::SetNativeLayer(native_window);
+    vk::EnsurePresentReady();
     SetError(EGL_SUCCESS);
     return reinterpret_cast<EGLSurface>(&globals().surface);
 }

@@ -27,8 +27,8 @@ VkFormat MapRbFormat(GLenum internalformat) {
         case GL_RGBA4:               return VK_FORMAT_R4G4B4A4_UNORM_PACK16;
         case GL_DEPTH_COMPONENT16:   return VK_FORMAT_D16_UNORM;
         case GL_DEPTH_COMPONENT24:
-        case GL_DEPTH24_STENCIL8:    return VK_FORMAT_D24_UNORM_S8_UINT;
-        case GL_DEPTH_COMPONENT32F:  return VK_FORMAT_D32_SFLOAT;
+        case GL_DEPTH24_STENCIL8:
+        case GL_DEPTH_COMPONENT32F:  return VK_FORMAT_D32_SFLOAT_S8_UINT;
         default: {
             static GLenum warned = 0;
             if (warned != internalformat) {
@@ -43,15 +43,15 @@ VkFormat MapRbFormat(GLenum internalformat) {
 
 bool IsDepthFormat(VkFormat f) {
     return f == VK_FORMAT_D16_UNORM || f == VK_FORMAT_D24_UNORM_S8_UINT ||
-           f == VK_FORMAT_D32_SFLOAT;
+           f == VK_FORMAT_D32_SFLOAT || f == VK_FORMAT_D32_SFLOAT_S8_UINT;
 }
 
-// Build a render pass matching the given signature. The default framebuffer
-// reuses the engine renderpass (color+depth); FBO passes are cached in
-// g.fbo_passes keyed by the signature string.
+// Build a render pass matching the given signature. FBO passes are cached in
+// g.fbo_passes keyed by the signature string; the default framebuffer uses the
+// engine render pass (which may carry the swapchain-negotiated BGRA colour
+// format, so it is never reused for FBOs whose textures stay R8G8B8A8).
 static VkRenderPass BuildFboPass(const std::string& sig, size_t n_color,
                                  bool has_depth, uint32_t samples) {
-    if (sig == "RGBA8:D24S8") return g.renderpass;
     auto it = g.fbo_passes.find(sig);
     if (it != g.fbo_passes.end()) return it->second;
 
@@ -77,7 +77,10 @@ static VkRenderPass BuildFboPass(const std::string& sig, size_t n_color,
     uint32_t depth_idx = (uint32_t)att.size();
     if (has_depth) {
         VkAttachmentDescription d{};
-        d.format = VK_FORMAT_D24_UNORM_S8_UINT;
+        // D32_SFLOAT_S8_UINT: matches the default depth format (D24S8 is not
+        // supported on Apple GPUs -- MoltenVK substitutes D32S8 anyway, so
+        // declaring D24S8 here would mismatch the depth image's real format).
+        d.format = VK_FORMAT_D32_SFLOAT_S8_UINT;
         d.samples = sc;
         d.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         d.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -187,7 +190,8 @@ bool CreateRbImage(RbObj& r, VkFormat fmt, uint32_t w, uint32_t h,
     uint32_t layer_count = 1;
     if (IsDepthFormat(fmt)) {
         aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-        if (fmt == VK_FORMAT_D24_UNORM_S8_UINT)
+        if (fmt == VK_FORMAT_D24_UNORM_S8_UINT ||
+            fmt == VK_FORMAT_D32_SFLOAT_S8_UINT)
             aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
         layer_count = 1;
     }
@@ -216,11 +220,11 @@ bool CreateTexSliceView(VkImage image, VkFormat fmt, bool is_depth,
 
 } // namespace
 
-// Public: render pass for an FBO signature ("RGBA8:D24S8" -> the default
-// pass). Cached in g.fbo_passes.
+// Public: render pass for an FBO signature. Cached in g.fbo_passes. Never
+// aliases the default render pass: its colour format may be the swapchain-
+// negotiated BGRA while FBO textures stay R8G8B8A8.
 VkRenderPass GetOrCreateFboPass(const std::string& sig, size_t n_color,
                                 bool has_depth, uint32_t samples) {
-    if (sig == "RGBA8:D24S8") return g.renderpass;
     auto it = g.fbo_passes.find(sig);
     if (it != g.fbo_passes.end()) return it->second;
     return BuildFboPass(sig, n_color, has_depth, samples);
@@ -420,7 +424,7 @@ bool ResolveDrawFbo(FboObj* out) {
             if (dit == g.renderbuffers.end()) return false;
             depth_img = dit->second.image;
         }
-        if (!CreateTexSliceView(depth_img, VK_FORMAT_D24_UNORM_S8_UINT, true,
+        if (!CreateTexSliceView(depth_img, VK_FORMAT_D32_SFLOAT_S8_UINT, true,
                                 f.depth.level, f.depth.layer, &f.depth_view)) {
             ML_LOG_ERROR("vk: FBO %llu depth view creation failed",
                          (unsigned long long)g.bound_draw_fbo);
@@ -433,9 +437,8 @@ bool ResolveDrawFbo(FboObj* out) {
     f.samples = samples;
     char buf[48];
     snprintf(buf, sizeof buf, "RGBA8x%zu%sS%u", f.colors.size(),
-             f.has_depth ? ":D24S8" : "", samples);
+             f.has_depth ? ":D32S8" : "", samples);
     f.sig = buf;
-    if (f.sig == "RGBA8x1:D24S8S1") f.sig = "RGBA8:D24S8";   // default alias
     f.pass = GetOrCreateFboPass(f.sig, f.colors.size(), f.has_depth, samples);
     if (f.pass == VK_NULL_HANDLE) return false;
 

@@ -538,7 +538,7 @@ void CreateDummyTexture();
 // when the default framebuffer is bound it returns true and leaves out=0.
 bool ResolveDrawFbo(FboObj* out);
 
-// Render pass for an FBO signature ("RGBA8:D24S8" -> the default pass).
+// Render pass for an FBO signature (colour format per-FBO, depth D32S8).
 VkRenderPass GetOrCreateFboPass(const std::string& sig, size_t n_color,
                                 bool has_depth, uint32_t samples);
 

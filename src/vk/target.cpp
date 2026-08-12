@@ -322,6 +322,30 @@ bool RecreateTargetForFormat(VkFormat fmt) {
     if (!CreateRenderPass()) return false;
     if (!CreateTarget()) return false;
     g.target_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    // The fresh image was created in UNDEFINED and never transitioned. The
+    // render pass declares COLOR_ATTACHMENT_OPTIMAL as its initial layout, so
+    // the image must actually BE in that layout on the GPU before any render
+    // pass runs -- otherwise the layout mismatch makes the first frame's
+    // contents undefined (observed as a solid-colour screen on device).
+    // EnsureInit does the same one-shot transition for the initial target.
+    {
+        VkCommandBufferBeginInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        if (g.fn.BeginCommandBuffer(g.cmd, &bi) == VK_SUCCESS) {
+            TransitionLayout(g.cmd, g.target_image, VK_IMAGE_LAYOUT_UNDEFINED,
+                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            g.fn.EndCommandBuffer(g.cmd);
+            VkSubmitInfo si{};
+            si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            si.commandBufferCount = 1;
+            si.pCommandBuffers = &g.cmd;
+            g.fn.QueueSubmit(g.queue, 1, &si, g.fence);
+            g.fn.WaitForFences(g.device, 1, &g.fence, VK_TRUE, UINT64_MAX);
+            g.fn.ResetFences(g.device, 1, &g.fence);
+        }
+    }
+    g.target_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     // Pipelines cached against the old default render pass / attachment format
     // are stale; they rebuild lazily on the next draw.
     g_pipelines.clear();

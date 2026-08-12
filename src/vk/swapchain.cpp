@@ -73,24 +73,27 @@ static bool EnsureSwapchain() {
     std::vector<VkSurfaceFormatKHR> fmts(nfmt);
     if (nfmt) g.fn.GetPhysicalDeviceSurfaceFormatsKHR(g.physical, surface, &nfmt,
                                                      fmts.data());
+    for (uint32_t i = 0; i < nfmt; ++i)
+        ML_LOG_INFO("vk: surface format[%u] = %u (colorspace %u)",
+                    i, (unsigned)fmts[i].format, (unsigned)fmts[i].colorSpace);
     g.fn.GetPhysicalDeviceSurfacePresentModesKHR(g.physical, surface, &npm, nullptr);
     std::vector<VkPresentModeKHR> modes(npm);
     if (npm) g.fn.GetPhysicalDeviceSurfacePresentModesKHR(g.physical, surface, &npm,
                                                           modes.data());
 
-    // Pick a surface format. The offscreen target starts as R8G8B8A8_UNORM
-    // and vkCmdBlitImage with FILTER_LINEAR requires src/dst to share the
-    // same format (VUID-vkCmdBlitImage-srcImage-00229), so prefer
-    // R8G8B8A8_UNORM when the surface exposes it; otherwise take the first
-    // surface format and retarget the offscreen target to match (MoltenVK
-    // CAMetalLayer surfaces commonly only advertise B8G8R8A8, and Metal's
-    // blit encoder cannot channel-remap a cross-format copy).
+    // Pick a surface format. The offscreen target, MC's textures and FBO
+    // attachments are all R8G8B8A8, and vkCmdBlitImage with FILTER_LINEAR
+    // requires src/dst to share the same format (VUID-vkCmdBlitImage-srcImage-
+    // 00229), so an R8G8B8A8 swapchain keeps the whole pipeline single-format.
+    // Prefer R8G8B8A8_UNORM with any colorspace; only when the surface has no
+    // such format at all (MoltenVK CAMetalLayer surfaces sometimes advertise
+    // only B8G8R8A8) fall back to the first format and retarget the offscreen
+    // target to match.
     VkSurfaceFormatKHR fmt{};
     if (nfmt == 0) return false;
     fmt = fmts[0];
     for (auto& f : fmts) {
-        if (f.format == VK_FORMAT_R8G8B8A8_UNORM &&
-            f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+        if (f.format == VK_FORMAT_R8G8B8A8_UNORM) {
             fmt = f;
             break;
         }
@@ -102,6 +105,8 @@ static bool EnsureSwapchain() {
             ML_LOG_ERROR("vk: failed to retarget offscreen target to swapchain format");
             return false;
         }
+        ML_LOG_INFO("vk: offscreen target now format %u (%ux%u)",
+                    (unsigned)g.format, g.width, g.height);
     }
 
     VkPresentModeKHR mode = VK_PRESENT_MODE_FIFO_KHR;
