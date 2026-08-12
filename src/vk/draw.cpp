@@ -49,6 +49,9 @@ bool StageStream(const VertexStream& stream, VkBuffer* buf,
 } // namespace
 
 void Draw(const DrawParams& params) {
+    // Frame slots are shared with RetireAllInflight() (worker-thread texture
+    // uploads); serialise so frame_draws/UBO/descriptors never race.
+    std::lock_guard<std::recursive_mutex> frame_lock(g_frame_mutex);
     if (!g.initialized) return;
     auto prog_it = g_programs.find(params.program);
     if (prog_it == g_programs.end()) return;
@@ -264,6 +267,9 @@ static void RetireFrame(uint32_t idx) {
 // before resource mutation (texture uploads / FBO changes) and before
 // readback so the GPU can never reference memory the host is about to free.
 void RetireAllInflight() {
+    // Frame slots are shared with SubmitFlush/Draw on the render thread;
+    // worker-thread texture uploads call this to drain frames.
+    std::lock_guard<std::recursive_mutex> frame_lock(g_frame_mutex);
     if (!g.initialized) return;
     for (uint32_t i = 0; i < kMaxFramesInFlight; ++i) RetireFrame(i);
 }
@@ -351,6 +357,7 @@ void DestroyGLSync(uint64_t sync) {
 }
 
 void SubmitFlush(bool wait) {
+    std::lock_guard<std::recursive_mutex> frame_lock(g_frame_mutex);
     if (!g.initialized) return;
 
     // Nothing to submit this call: if the caller wants completion semantics
@@ -731,6 +738,7 @@ void RefreshReadback() {
 }
 
 void ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, void* out) {
+    std::lock_guard<std::recursive_mutex> frame_lock(g_frame_mutex);
     if (!g.initialized || !g.readback_map) return;
     // The readback must reflect the latest submitted frame. Force the pending
     // frame through synchronously so the buffer below is guaranteed fresh.

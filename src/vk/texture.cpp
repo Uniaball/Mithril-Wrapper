@@ -208,6 +208,10 @@ void DestroyTexObj(TexObj& t) {
 
 void UploadTexture(uint64_t gl_id, const TexUpload& img,
                    const TexSamplerInfo& sampler) {
+    // The texture table is read by Draw() on the render thread; uploads come
+    // from worker threads (MC builds atlases). Hold the frame lock across the
+    // whole replace so DestroyTexObj/emplace never race GetTexObj/GetResidentSampler.
+    std::lock_guard<std::recursive_mutex> frame_lock(g_frame_mutex);
     if (!g.initialized || img.mip.empty()) return;
     // A frame flush may still be sampling the resident image we're about to
     // replace; wait for every in-flight slot before tearing it down.
@@ -324,6 +328,7 @@ void CreateDummyTexture() {
 }
 
 void DestroyResidentTexture(uint64_t gl_id) {
+    std::lock_guard<std::recursive_mutex> frame_lock(g_frame_mutex);
     if (!g.initialized) return;
     RetireAllInflight();
     auto it = g.textures.find(gl_id);
@@ -348,6 +353,7 @@ TexObj* GetTexObj(uint64_t gl_id) {
 // tied to a specific texture's mip count, so a generous maxLod (mips=32 =>
 // 31.0f) is used so the same VkSampler works with any bound texture.
 void UpdateSampler(uint64_t gl_id, const TexSamplerInfo& sampler) {
+    std::lock_guard<std::recursive_mutex> frame_lock(g_frame_mutex);
     if (!g.initialized) return;
     RetireAllInflight();
     auto it = g.samplers.find(gl_id);
@@ -361,6 +367,7 @@ void UpdateSampler(uint64_t gl_id, const TexSamplerInfo& sampler) {
 }
 
 void DestroyResidentSampler(uint64_t gl_id) {
+    std::lock_guard<std::recursive_mutex> frame_lock(g_frame_mutex);
     if (!g.initialized) return;
     RetireAllInflight();
     auto it = g.samplers.find(gl_id);

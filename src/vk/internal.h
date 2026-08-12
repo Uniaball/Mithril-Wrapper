@@ -499,6 +499,15 @@ extern std::unordered_map<std::string, VkPipeline> g_pipelines;
 // resource and kills the device with kIOGPUCommandBufferCallbackErrorInvalidResource.
 extern std::mutex g_aux_mutex;
 
+// Guards the double-buffered frame slots (frames[], frame_index, the draw
+// list and descriptor/UBO recycling). MC uploads textures from worker threads
+// and every upload drains in-flight frames via RetireAllInflight(), which runs
+// concurrently with the render thread's SubmitFlush()/Draw() on the same slots
+// -- a data race that corrupts the frame state and hands the GPU freed
+// staging/descriptors (Invalid Resource -> device lost). Recursive because
+// Draw() flushes when the UBO pool runs out.
+extern std::recursive_mutex g_frame_mutex;
+
 // ---- shared helpers (defined in target.cpp) ------------------------------
 
 VkDeviceSize AlignUp(VkDeviceSize v, VkDeviceSize a);

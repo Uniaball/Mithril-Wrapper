@@ -12,6 +12,7 @@ Engine g;
 std::unordered_map<uint64_t, Program> g_programs;
 std::unordered_map<std::string, VkPipeline> g_pipelines;
 std::mutex g_aux_mutex;
+std::recursive_mutex g_frame_mutex;
 
 bool IsInitialized() { return g.initialized; }
 
