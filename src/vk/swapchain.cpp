@@ -256,6 +256,12 @@ bool Present() {
     // while still in its initial undefined contents and the screen stays black.
     if (g.frame_dirty) SubmitFlush(false);
 #ifdef VK_USE_PLATFORM_METAL_EXT
+    // No native window (offscreen fallback: the contract smoke passes a fake
+    // non-CAMetalLayer pointer, which SetNativeLayer rejected) means there is
+    // nothing to present to -- this swap is a successful no-op, matching the
+    // offscreen lavapipe contract. Only a live layer that fails to build a
+    // swapchain is a genuine present failure.
+    if (!g.native_layer) return true;
     if (!EnsureSwapchain()) return false;
 
     RetireAllInflight();
