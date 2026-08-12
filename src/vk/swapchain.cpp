@@ -280,6 +280,30 @@ bool Present() {
 
     RetireAllInflight();
 
+    // One-shot diagnostic: report what the offscreen target actually contains
+    // at its centre pixel. Combined with the screen image this distinguishes
+    // a render/clear-side bug from a swapchain display/channel bug without
+    // guessing. Values are the raw target bytes in target format order
+    // (RGBA if format==37, BGRA if format==44).
+    {
+        static bool s_center_diag_done = false;
+        if (!s_center_diag_done) {
+            s_center_diag_done = true;
+            SubmitFlush(true);  // guarantee the readback reflects the latest frame
+            RetireAllInflight();
+            if (g.readback_map && g.read_w && g.read_h) {
+                const uint8_t* p =
+                    g.readback_map + (g.read_h / 2) * g.read_w * 4 +
+                    (g.read_w / 2) * 4;
+                ML_LOG_INFO("vk: diag target %ux%u format=%u center px = %u,%u,%u,%u",
+                            g.read_w, g.read_h, (unsigned)g.format,
+                            p[0], p[1], p[2], p[3]);
+            } else {
+                ML_LOG_INFO("vk: diag target center px unavailable (no readback)");
+            }
+        }
+    }
+
     // Acquire the next image. The acquire is signalled via a fence rather
     // than a semaphore so the same sync object can be safely waited + reset
     // between frames; reusing a semaphore that MoltenVK has not yet observed
