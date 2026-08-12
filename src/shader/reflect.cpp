@@ -50,6 +50,7 @@ void ReflectProgram(Program& prog) {
     prog.uniform_by_name.clear();
     prog.uniform_by_location.clear();
     prog.attrib_locations.clear();
+    prog.attrib_kinds.clear();
     prog.samplers.clear();
     prog.uniform_blocks.clear();
     prog.frag_data.clear();
@@ -110,11 +111,22 @@ void ReflectProgram(Program& prog) {
             for (auto& r : res.separate_images) add_sampler(r);
             for (auto& r : res.separate_samplers) add_sampler(r);
 
-            // Attributes: location + name.
+            // Attributes: location + name. Only the vertex stage's inputs are
+            // vertex attributes; the fragment stage's stage_inputs are
+            // interpolated varyings with their own location namespace, so they
+            // must not overwrite vertex attribute kinds.
             for (auto& r : res.stage_inputs) {
                 if (r.name.empty()) continue;
                 int loc = static_cast<int>(compiler.get_decoration(r.id, spv::DecorationLocation));
                 prog.attrib_locations[r.name] = loc;
+                if (!vs) continue;
+                // SPIR-V input scalar base type: Float=0, Int=1, UInt=2. A
+                // vector's basetype is its component type (ivec2 -> Int).
+                int kind = 0;
+                const spirv_cross::SPIRType& t = compiler.get_type(r.type_id);
+                if (t.basetype == spirv_cross::SPIRType::Int) kind = 1;
+                else if (t.basetype == spirv_cross::SPIRType::UInt) kind = 2;
+                prog.attrib_kinds[loc] = kind;
             }
         } catch (const std::exception& e) {
             ML_LOG_WARN("SPIRV-Cross reflection failed: %s", e.what());

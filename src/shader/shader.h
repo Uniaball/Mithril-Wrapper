@@ -78,6 +78,12 @@ struct Program {
     std::unordered_map<std::string, GLint> uniform_by_name;    // name -> location
     std::unordered_map<GLint, size_t> uniform_by_location;     // location -> uniforms idx
     std::unordered_map<std::string, GLint> attrib_locations;   // name -> location
+    // Vertex input kind per attribute location (0 = float, 1 = int, 2 = uint),
+    // reflected from the vertex stage so the backend picks a matching
+    // vertex-input format (MoltenVK rejects a Float2 format feeding an int2
+    // shader input: "Cannot convert attribute from MTLAttributeFormatFloat2 to
+    // int2 or uint2.").
+    std::unordered_map<GLint, int> attrib_kinds;
     std::vector<SamplerRef> samplers;      // M4: active sampler uniforms
     // S2 stage F: uniform-block introspection + fragment data bindings.
     std::vector<UniformBlock> uniform_blocks;  // index == GL block index
