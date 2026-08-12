@@ -275,7 +275,10 @@ bool Present() {
     VkResult ar = g.fn.AcquireNextImageKHR(
         g.device, g.swap.handle, UINT64_MAX, VK_NULL_HANDLE,
         g.swap.acquire_fence, &g.swap.acquire_index);
-    if (ar == VK_ERROR_OUT_OF_DATE_KHR || ar == VK_SUBOPTIMAL_KHR) {
+    // Only a hard OUT_OF_DATE warrants rebuilding. SUBOPTIMAL is not a
+    // failure: the image is valid and presentable, just not a perfect surface
+    // match (e.g. transform) -- rebuilding on every frame for it would spin.
+    if (ar == VK_ERROR_OUT_OF_DATE_KHR) {
         DestroySwapchain();
         if (!EnsureSwapchain()) return false;
         ar = g.fn.AcquireNextImageKHR(g.device, g.swap.handle, UINT64_MAX,
@@ -386,7 +389,11 @@ bool Present() {
     pi.pSwapchains = &g.swap.handle;
     pi.pImageIndices = &idx;
     VkResult pr = g.fn.QueuePresentKHR(g.queue, &pi);
-    if (pr != VK_SUCCESS) {
+    // SUBOPTIMAL is NOT a present failure: the frame was still queued for
+    // display (the swapchain just no longer perfectly matches the surface,
+    // e.g. a transform or a slightly stale extent). Report success so the
+    // app's swap completes; a full rebuild can follow on a later frame.
+    if (pr != VK_SUCCESS && pr != VK_SUBOPTIMAL_KHR) {
         ML_LOG_ERROR("vk: QueuePresentKHR failed (0x%x)", (unsigned)pr);
         return false;
     }
