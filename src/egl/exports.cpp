@@ -275,7 +275,13 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
     (void)dpy;
     (void)surface;
     // iOS: present the completed offscreen frame; Linux: no swapchain, no-op.
-    vk::Present();
+    // Surface loss / swapchain failure is surfaced as an EGL error so the app
+    // can observe a broken present path instead of silently rendering black.
+    if (!vk::Present()) {
+        ML_LOG_ERROR("egl: eglSwapBuffers present failed");
+        SetError(EGL_BAD_NATIVE_WINDOW);
+        return EGL_FALSE;
+    }
     SetError(EGL_SUCCESS);
     return EGL_TRUE;
 }
