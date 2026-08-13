@@ -52,8 +52,11 @@ jobs:
 
       - name: Place dylib where smoke binaries expect it
         run: |
+          # download-artifact@v4 unpacks into <path>/<artifact-name>/...
+          DYLIB=$(find artifacts -name "*.dylib" | head -1)
+          [ -n "$DYLIB" ] || { echo "no dylib artifact found"; exit 1; }
           mkdir -p output
-          mv artifacts/libmithril-macos-arm64.dylib output/libmithril.dylib
+          mv "$DYLIB" output/libmithril.dylib
           file output/libmithril.dylib
 
       - name: Install Vulkan loader + MoltenVK (Homebrew)
@@ -421,8 +424,10 @@ jobs:
 
       - name: Place .so where smoke binaries expect it
         run: |
+          SO=$(find artifacts -name "*.so" | head -1)
+          [ -n "$SO" ] || { echo "no .so artifact found"; exit 1; }
           mkdir -p output
-          mv artifacts/libmithril.so output/libmithril.so
+          mv "$SO" output/libmithril.so
 
       - name: Build smoke test binaries
         run: |
