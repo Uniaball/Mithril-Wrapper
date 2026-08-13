@@ -18,10 +18,15 @@
  * it exists so the iOS simulator CI job can run the same shaders before the
  * user's device does.
  *
- * Expected pixels (bilerp of the 2x2 checker at the given u/v):
- *   draw1 fullscreen gradient: (0.25, 0.5)  -> (128,  64, 128)
- *   draw2 opaque "button" quad: center       -> (128, 128, 128)
- *   draw3 alpha-0 quad (blend off): center   -> gradient underneath (128,128,189)
+ * Expected pixels (bilerp of the 2x2 checker at the given u/v; texel
+ * centres sit at (0.25,0.25),(0.75,0.25),(0.25,0.75),(0.75,0.75) in uv):
+ *   draw1 fullscreen gradient: (0.25, 0.5)  -> (128,  0, 128)  (u on texel
+ *     col-0 centre, v mid-way between rows: 0.5*red + 0.5*blue)
+ *   draw2 opaque "button" quad: center       -> (128, 128, 128) (all four
+ *     texels averaged)
+ *   draw3 alpha-0 quad (blend off): center   -> gradient underneath (128,128,251)
+ *     (v=0.742 => row-1 weight (0.742-0.25)/0.5 = 0.984, both col-1 texels
+ *     white/blue have B=255)
  *
  * Build (from project root):
  *   gcc -o tests/mcshape_smoke tests/mcshape_smoke.c -ldl
@@ -337,8 +342,8 @@ int main(void) {
 
     /* gui (128, 256) -> uv (0.25, 0.5) */
     readPixels(128, H - 1 - 256, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    CHECK(px_match(px, 128, 64, 128, 255),
-          "gradient bilerp at (0.25,0.5) = (128,64,128), got (%d,%d,%d,%d)",
+    CHECK(px_match(px, 128, 0, 128, 255),
+          "gradient bilerp at (0.25,0.5) = (128,0,128), got (%d,%d,%d,%d)",
           px[0], px[1], px[2], px[3]);
 
     /* button centre: gui (256,140) -> uv (0.5,0.5) */
@@ -347,10 +352,10 @@ int main(void) {
           "opaque button centre = (128,128,128), got (%d,%d,%d,%d)",
           px[0], px[1], px[2], px[3]);
 
-    /* discard guard: gui (256,380) -> gradient underneath (128,128,189) */
+    /* discard guard: gui (256,380) -> gradient underneath (128,128,251) */
     readPixels(256, H - 1 - 380, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    CHECK(px_match(px, 128, 128, 189, 255),
-          "alpha-0 quad discarded, gradient underneath = (128,128,189), got (%d,%d,%d,%d)",
+    CHECK(px_match(px, 128, 128, 251, 255),
+          "alpha-0 quad discarded, gradient underneath = (128,128,251), got (%d,%d,%d,%d)",
           px[0], px[1], px[2], px[3]);
 
     /* corner still shows clear colour (gradient covers the frame, but the

@@ -252,10 +252,10 @@ VkPipeline GetOrCreatePipeline(const Program& prog, const DrawOp& op) {
             : op.pipe.cull_face == GL_FRONT_AND_BACK
                   ? VK_CULL_MODE_FRONT_AND_BACK
                   : VK_CULL_MODE_BACK_BIT;
-    // Vulkan's framebuffer is +Y-down (we keep the GL bottom-left flip in the
-    // readout), so a GL front-face winding maps to the opposite Vk value.
-    rs.frontFace = op.pipe.front_face == GL_CW ? VK_FRONT_FACE_COUNTER_CLOCKWISE
-                                                : VK_FRONT_FACE_CLOCKWISE;
+    // The viewport uses a negative height to flip Vulkan's +Y-down NDC back
+    // to GL's +Y-up, so screen-space winding now matches GL directly.
+    rs.frontFace = op.pipe.front_face == GL_CW ? VK_FRONT_FACE_CLOCKWISE
+                                                : VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rs.lineWidth = 1.0f;
     // M6 stage D / S6: provoking vertex convention (VK_EXT_provoking_vertex).
     // GL's default (LAST_VERTEX_CONVENTION) matches the pipeline's implicit

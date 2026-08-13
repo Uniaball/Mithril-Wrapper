@@ -146,10 +146,11 @@ static const char* FS =
     "    fragColor = vColor;\n"
     "}\n";
 
-/* GL bottom-left origin: pixel (x,y) is NDC x in [-1,1] -> (x+1)/2*W and
-   NDC y -> (1-y)/2*H (row 0 = NDC y = +1). The offscreen target is 512x512. */
+/* GL bottom-left origin: glReadPixels(x, y) reads the pixel y rows above the
+   bottom, so NDC y in [-1,1] -> pixel y = (ndc+1)/2*H (y=0 = NDC -1 = bottom,
+   y=H-1 = NDC +1 = top). The offscreen target is 512x512. */
 static int px_x(float ndc_x) { return (int)((ndc_x + 1.0f) * 256.0f); }
-static int px_y(float ndc_y) { return (int)((1.0f - ndc_y) * 256.0f); }
+static int px_y(float ndc_y) { return (int)((ndc_y + 1.0f) * 256.0f); }
 
 static int px_match(const unsigned char* got, unsigned char r,
                     unsigned char g, unsigned char b, unsigned char a) {
