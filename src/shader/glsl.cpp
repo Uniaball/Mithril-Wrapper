@@ -228,6 +228,24 @@ void assign_attrib_locations(std::string& source) {
     }
 }
 
+// Vulkan's clip space Y is inverted relative to GL: VK NDC y=-1 maps to the
+// TOP of the framebuffer, GL NDC y=-1 to the bottom, so rendering an app's
+// gl_Position as-is produces a vertically mirrored image. Negate gl_Position.y
+// at the end of the VS main() to render upright. This is driver-independent --
+// the alternative (negative viewport height) breaks MoltenVK because it passes
+// VkViewport through to Metal 1:1 and MTLViewport requires height >= 0.
+void flip_clip_y(std::string& source) {
+    size_t mpos = source.find("void main");
+    if (mpos == std::string::npos) return;
+    size_t open = source.find('{', mpos);
+    if (open == std::string::npos) return;
+    size_t close = find_matching_brace(source, open);
+    if (close == std::string::npos) return;
+    // Idempotent: don't double-flip if this source was already processed.
+    if (source.find("gl_Position.y = -gl_Position.y") != std::string::npos) return;
+    source.insert(close, "\n    gl_Position.y = -gl_Position.y;\n");
+}
+
 void split_declarators(const std::string& list, std::vector<std::string>& out) {
     std::string cur;
     int depth = 0;
@@ -410,6 +428,11 @@ bool CompileStage(GLenum stage, const std::string& src,
     if (stage == GL_VERTEX_SHADER) {
         assign_attrib_locations(source);
         assign_attrib_locations(unwrapped);
+        // Map GL's +Y-up NDC onto Vulkan's +Y-down clip space (see above).
+        // Applied to both wrapped and unwrapped source so both compile paths
+        // produce the same upright render.
+        flip_clip_y(source);
+        flip_clip_y(unwrapped);
     }
     assign_sampler_bindings(source);
     assign_sampler_bindings(unwrapped);

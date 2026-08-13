@@ -532,12 +532,13 @@ void SubmitFlush(bool wait) {
         rbi.renderArea = {{0, 0}, {pw, ph}};
         g.fn.CmdBeginRenderPass(frame.cmd, &rbi, VK_SUBPASS_CONTENTS_INLINE);
 
-        // GL viewport origin is bottom-left; Vulkan's is top-left, and GL NDC
-        // has +Y up while Vulkan's is +Y down. A negative viewport height
-        // (core Vulkan 1.1, VK_KHR_maintenance1) flips the rasterisation Y so
-        // content renders upright (gui y=0 at the top) -- the rect still
-        // covers the GL viewport's Vulkan rows [ph-(gl_y+gl_h), ph-gl_y].
-        // (The scissor path below does the same ph - y - h flip.)
+        // GL viewport origin is bottom-left; Vulkan's is top-left, so flip Y.
+        // (The scissor path below already does the same ph - y - h flip.)
+        // Note: we do NOT use a negative viewport height to flip NDC here --
+        // MoltenVK passes VkViewport through to Metal 1:1 and MTLViewport
+        // requires height >= 0, so negative heights break rendering on Apple
+        // GPUs. The GL-to-Vulkan NDC Y inversion is handled in the vertex
+        // shader instead (gl_Position.y = -gl_Position.y, see CompileStage).
         // Clamp the GL rect into the target first: viewports that extend past
         // the framebuffer (e.g. the untouched default 512x512 viewport against
         // a smaller FBO) would otherwise produce a negative Vulkan Y and push
@@ -548,9 +549,9 @@ void SubmitFlush(bool wait) {
         const float gl_x = std::max<float>(g.vp_x, 0.f);
         const float gl_y = std::max<float>(g.vp_y, 0.f);
         vp.x = gl_x;
-        vp.y = ph - gl_y;
+        vp.y = ph - (gl_y + gl_h);
         vp.width = gl_w;
-        vp.height = -gl_h;
+        vp.height = gl_h;
         vp.minDepth = 0.f;
         vp.maxDepth = 1.f;
         g.fn.CmdSetViewport(frame.cmd, 0, 1, &vp);

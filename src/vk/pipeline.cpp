@@ -252,8 +252,9 @@ VkPipeline GetOrCreatePipeline(const Program& prog, const DrawOp& op) {
             : op.pipe.cull_face == GL_FRONT_AND_BACK
                   ? VK_CULL_MODE_FRONT_AND_BACK
                   : VK_CULL_MODE_BACK_BIT;
-    // The viewport uses a negative height to flip Vulkan's +Y-down NDC back
-    // to GL's +Y-up, so screen-space winding now matches GL directly.
+    // The vertex shader negates gl_Position.y to map GL's +Y-up NDC onto
+    // Vulkan's +Y-down clip space (see CompileStage), which flips the
+    // screen-space winding back to GL's, so a GL front-face maps directly.
     rs.frontFace = op.pipe.front_face == GL_CW ? VK_FRONT_FACE_CLOCKWISE
                                                 : VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rs.lineWidth = 1.0f;
