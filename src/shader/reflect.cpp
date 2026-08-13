@@ -127,6 +127,8 @@ void ReflectProgram(Program& prog) {
                 if (t.basetype == spirv_cross::SPIRType::Int) kind = 1;
                 else if (t.basetype == spirv_cross::SPIRType::UInt) kind = 2;
                 prog.attrib_kinds[loc] = kind;
+                ML_LOG_DEBUG("reflect: VS input '%s' location=%d kind=%d",
+                             r.name.c_str(), loc, kind);
             }
         } catch (const std::exception& e) {
             ML_LOG_WARN("SPIRV-Cross reflection failed: %s", e.what());

@@ -161,16 +161,14 @@ static const char* FS =
 /* MC GUI vertex format: POSITION(3f) + UV0(2f) + COLOR(4 normalized ubytes). */
 typedef struct { float x, y, z, u, v; unsigned char r, g, b, a; } Vtx;
 
-static Vtx Quad(float x0, float y0, float x1, float y1,
-                unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
-    Vtx q[6];
+static void Quad(Vtx* q, float x0, float y0, float x1, float y1,
+                 unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
     q[0] = (Vtx){x0, y0, 0, 0, 0, r, g, b, a};
     q[1] = (Vtx){x1, y0, 0, 1, 0, r, g, b, a};
     q[2] = (Vtx){x1, y1, 0, 1, 1, r, g, b, a};
     q[3] = (Vtx){x0, y0, 0, 0, 0, r, g, b, a};
     q[4] = (Vtx){x1, y1, 0, 1, 1, r, g, b, a};
     q[5] = (Vtx){x0, y1, 0, 0, 1, r, g, b, a};
-    return q[0];
 }
 
 int main(void) {
@@ -299,10 +297,9 @@ int main(void) {
     vertexAttribPtr(2, 4, GL_UNSIGNED_BYTE, 1, sizeof(Vtx), (void*)20);
 
     Vtx v[18];
-    Vtx full = Quad(0, 0, (float)W, (float)H, 255, 255, 255, 255);
-    Vtx btn  = Quad(100, 80, 412, 200, 255, 255, 255, 255);
-    Vtx disc = Quad(200, 300, 312, 460, 0, 0, 0, 0);
-    for (int i = 0; i < 6; ++i) { v[i] = full; v[6 + i] = btn; v[12 + i] = disc; }
+    Quad(v,      0,   0, (float)W, (float)H, 255, 255, 255, 255);
+    Quad(v + 6, 100,  80,       412,       200, 255, 255, 255, 255);
+    Quad(v + 12, 200, 300,      312,       460,   0,   0,   0,   0);
     bufferData(GL_ARRAY_BUFFER, sizeof v, v, 0x88E4);
 
     clearColor(0.02f, 0.02f, 0.02f, 1.0f);

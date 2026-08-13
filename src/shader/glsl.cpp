@@ -182,6 +182,52 @@ void assign_sampler_bindings(std::string& source) {
     }
 }
 
+// Assign explicit layout(location=N) to VS `in` declarations that lack one,
+// in declaration order starting from 0. Mirrors assign_sampler_bindings:
+// glslang's setAutoMapLocations + mapIO does not guarantee declaration-order
+// assignment, so shaders without explicit locations (e.g. MC's
+// position_tex_color) get unpredictable locations that mismatch the GL
+// attribute indices used by glVertexAttribPointer — the draw path uses
+// va.location = slot directly, so a mismatch sends vertex data to the wrong
+// shader input and the screen goes black.
+void assign_attrib_locations(std::string& source) {
+    static const std::regex re(
+        R"(^[ \t]*(layout\s*\([^)]*\)\s*)?in\s+(?:(?:highp|mediump|lowp)\s+)?(\w+)\s+(\w+)\s*;)",
+        std::regex::multiline | std::regex::optimize);
+    struct Edit { size_t pos; size_t len; std::string text; };
+    std::vector<Edit> edits;
+    {
+        auto cur = source.cbegin(), end = source.cend();
+        std::smatch m;
+        int slot = 0;
+        while (std::regex_search(cur, end, m, re)) {
+            size_t off = m.position(0) + (cur - source.cbegin());
+            cur = m.suffix().first;
+            if (is_in_comment(source, off)) continue;
+            std::string layout_str = m[1].matched ? m[1].str() : "";
+            if (layout_str.find("location") != std::string::npos) {
+                ++slot;
+                continue;
+            }
+            if (m[1].matched) {
+                edits.push_back({off, m[1].str().size(),
+                                 "layout(location=" + std::to_string(slot) + ")"});
+            } else {
+                edits.push_back({off, 0, "layout(location=" +
+                                         std::to_string(slot) + ") "});
+            }
+            ++slot;
+        }
+    }
+    for (auto it = edits.rbegin(); it != edits.rend(); ++it) {
+        if (it->len == 0) {
+            source.insert(it->pos, it->text);
+        } else {
+            source.replace(it->pos, it->len, it->text);
+        }
+    }
+}
+
 void split_declarators(const std::string& list, std::vector<std::string>& out) {
     std::string cur;
     int depth = 0;
@@ -360,6 +406,10 @@ bool CompileStage(GLenum stage, const std::string& src,
     } catch (const std::exception& e) {
         ML_LOG_WARN("wrap_loose_uniforms threw (%s); using unwrapped source", e.what());
         source = unwrapped;
+    }
+    if (stage == GL_VERTEX_SHADER) {
+        assign_attrib_locations(source);
+        assign_attrib_locations(unwrapped);
     }
     assign_sampler_bindings(source);
     assign_sampler_bindings(unwrapped);
