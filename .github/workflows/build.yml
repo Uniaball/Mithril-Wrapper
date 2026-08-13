@@ -294,7 +294,7 @@ jobs:
       - name: Install Vulkan runtime (lavapipe)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers
+          sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers ffmpeg
           vulkaninfo --summary 2>/dev/null | head -10 || true
 
       - name: Build smoke test binaries
