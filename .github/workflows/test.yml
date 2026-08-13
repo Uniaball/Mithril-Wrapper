@@ -390,9 +390,12 @@ jobs:
           # SIMCTL_CHILD_* forwards env into the spawned process; the test reads
           # MITHRIL_LIB_PATH so it does not depend on the CWD.
           SIMCTL_CHILD_MITHRIL_LIB_PATH=/tmp/mr/output/libmithril.dylib \
+          SIMCTL_CHILD_MVK_CONFIG_LOG_LEVEL=3 \
             xcrun simctl spawn "$UDID" /tmp/mr/mcshape_smoke_sim \
             > mcshape_sim.txt 2>&1 || true
           cat mcshape_sim.txt
+          # dump any simulator crash reports for the smoke binary
+          ls -t "$HOME/Library/Logs/DiagnosticReports/" 2>/dev/null | head -5 || true
           grep -q "MCSHAPE SMOKE ALL PASSED" mcshape_sim.txt
 
   # ---- Linux: run the smoke tests against the Linux .so --------------------
