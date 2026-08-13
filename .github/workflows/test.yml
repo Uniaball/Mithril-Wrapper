@@ -84,7 +84,7 @@ jobs:
           clang -o tests/state_smoke      tests/state_smoke.c      -ldl
           clang -o tests/shader_smoke     tests/shader_smoke.c     -ldl
           clang -o tests/draw_smoke       tests/draw_smoke.c       -ldl
-          clang -o tests/mcshape_smoke    tests/mcshape_smoke.c    -ldl
+          clang -o tests/mcshape_smoke    tests/mcshape_smoke.c    -ldl -lobjc
           clang -o tests/intattr_smoke    tests/intattr_smoke.c    -ldl
           clang -o tests/texture_smoke    tests/texture_smoke.c    -ldl
           clang -o tests/fbo_smoke        tests/fbo_smoke.c        -ldl
@@ -328,6 +328,8 @@ jobs:
 
       - name: Download prebuilt MoltenVK (iOS Simulator dylib)
         if: steps.cache-mvk.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # The official release ships the iOS Simulator slice only as a static
           # .a inside an XCFramework, but its dynamic xcframework also carries a
@@ -360,7 +362,7 @@ jobs:
           SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
           ARCH=$(uname -m)
           if [ "$ARCH" = "arm64" ]; then TARGET=arm64-apple-ios14.0-simulator; else TARGET=x86_64-apple-ios14.0-simulator; fi
-          clang -target "$TARGET" -isysroot "$SDK" -o tests/mcshape_smoke_sim tests/mcshape_smoke.c
+          clang -target "$TARGET" -isysroot "$SDK" -o tests/mcshape_smoke_sim tests/mcshape_smoke.c -lobjc
           file tests/mcshape_smoke_sim
 
       - name: Boot simulator, deploy and run mcshape
