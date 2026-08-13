@@ -391,6 +391,7 @@ jobs:
           # MITHRIL_LIB_PATH so it does not depend on the CWD.
           SIMCTL_CHILD_MITHRIL_LIB_PATH=/tmp/mr/output/libmithril.dylib \
           SIMCTL_CHILD_MVK_CONFIG_LOG_LEVEL=3 \
+          SIMCTL_CHILD_MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 \
             xcrun simctl spawn "$UDID" /tmp/mr/mcshape_smoke_sim \
             > mcshape_sim.txt 2>&1 || true
           cat mcshape_sim.txt
