@@ -202,11 +202,16 @@ static void* MakeMetalLayer(void) {
 #endif
 
 int main(void) {
+    // MITHRIL_LIB_PATH lets CI run the binary from an arbitrary CWD (e.g. a
+    // booted iOS Simulator where ./output is not the working directory).
+    const char* libpath = getenv("MITHRIL_LIB_PATH");
+    if (!libpath) {
 #if defined(__APPLE__)
-    const char* libpath = "./output/libmithril.dylib";
+        libpath = "./output/libmithril.dylib";
 #else
-    const char* libpath = "./output/libmithril.so";
+        libpath = "./output/libmithril.so";
 #endif
+    }
     void* h = dlopen(libpath, RTLD_NOW | RTLD_GLOBAL);
     if (!h) { printf("dlopen: %s\n", dlerror()); return 2; }
 
