@@ -434,17 +434,21 @@ void SubmitFlush(bool wait) {
             c.float32[1] = g.clear_g;
             c.float32[2] = g.clear_b;
             c.float32[3] = g.clear_a;
-            auto clear_img = [&](VkImage img, VkImageLayout lay) {
+            // Record the new layout as TRANSFER_DST_OPTIMAL so the restore
+            // transition below (back to COLOR_ATTACHMENT_OPTIMAL) actually
+            // fires -- the depth clear path does the same bookkeeping.
+            auto clear_img = [&](VkImage img, VkImageLayout* lay) {
                 if (img == VK_NULL_HANDLE) return;
-                TransitionLayout(frame.cmd, img, lay,
+                TransitionLayout(frame.cmd, img, *lay,
                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
                 g.fn.CmdClearColorImage(frame.cmd, img,
                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                         &c, 1, &color_range);
+                *lay = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             };
             if (!fbo) {
                 if (g.clear_attachment <= 0)
-                    clear_img(color_img, *color_layout);
+                    clear_img(color_img, color_layout);
             } else {
                 for (size_t i = 0; i < fbo->colors.size(); ++i) {
                     if (!(OpDrawBufEnabled(*fbo, i))) continue;
@@ -452,11 +456,12 @@ void SubmitFlush(bool wait) {
                     if (g.clear_attachment >= 0 &&
                         (int)i != g.clear_attachment)
                         continue;
-                    clear_img(FboColorImage(*fbo, (int)i),
-                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                    if (fbo->color_msaa[i])
-                        clear_img(FboResolveImage(*fbo, (int)i),
-                                   VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+                    clear_img(FboColorImage(*fbo, (int)i), &fbo->color_layout);
+                    if (fbo->color_msaa[i]) {
+                        VkImageLayout tmp =
+                            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                        clear_img(FboResolveImage(*fbo, (int)i), &tmp);
+                    }
                 }
             }
         }

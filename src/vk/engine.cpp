@@ -27,9 +27,55 @@ bool SetTargetSize(uint32_t w, uint32_t h) {
     g.fn.DestroyImageView(g.device, g.target_view, nullptr);
     g.fn.DestroyImage(g.device, g.target_image, nullptr);
     g.fn.FreeMemory(g.device, g.target_mem, nullptr);
+    // Depth must be rebuilt at the new size too: CreateDepthTarget early-outs
+    // when a handle already exists, and a stale 512x512 depth backing a larger
+    // framebuffer is a validation violation (attachment < framebuffer extent).
+    g.fn.DestroyImageView(g.device, g.depth_view, nullptr);
+    g.fn.DestroyImage(g.device, g.depth_image, nullptr);
+    g.fn.FreeMemory(g.device, g.depth_mem, nullptr);
+    g.depth_view = VK_NULL_HANDLE;
+    g.depth_image = VK_NULL_HANDLE;
+    g.depth_mem = VK_NULL_HANDLE;
     g.width = w;
     g.height = h;
-    return CreateTarget();
+    if (!CreateTarget()) return false;
+
+    // The fresh images were created in UNDEFINED and never transitioned. The
+    // render pass declares COLOR_ATTACHMENT_OPTIMAL / DEPTH_STENCIL_ATTACHMENT_
+    // OPTIMAL as its initial layouts, so they must actually BE in those layouts
+    // on the GPU before any render pass runs -- otherwise the layout mismatch
+    // makes the first frame's contents undefined (observed as a solid-colour
+    // screen on device). Same one-shot transition as EnsureInit /
+    // RecreateTargetForFormat.
+    {
+        std::lock_guard<std::mutex> aux_lock(g_aux_mutex);
+        VkCommandBufferBeginInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        if (g.fn.BeginCommandBuffer(g.cmd, &bi) == VK_SUCCESS) {
+            TransitionLayout(g.cmd, g.target_image, VK_IMAGE_LAYOUT_UNDEFINED,
+                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            TransitionLayoutAspect(g.cmd, g.depth_image,
+                                   {VK_IMAGE_ASPECT_DEPTH_BIT |
+                                        VK_IMAGE_ASPECT_STENCIL_BIT,
+                                    0, 1, 0, 1},
+                                   VK_IMAGE_LAYOUT_UNDEFINED,
+                                   VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+            g.fn.EndCommandBuffer(g.cmd);
+            VkSubmitInfo si{};
+            si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            si.commandBufferCount = 1;
+            si.pCommandBuffers = &g.cmd;
+            g.fn.QueueSubmit(g.queue, 1, &si, g.fence);
+            g.fn.WaitForFences(g.device, 1, &g.fence, VK_TRUE, UINT64_MAX);
+            g.fn.ResetFences(g.device, 1, &g.fence);
+        }
+    }
+    g.target_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    g.depth_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    // Pipelines cached against the default render pass survive a resize (the
+    // attachment format is unchanged); the viewport/scissor adapt per draw.
+    return true;
 }
 
 uint32_t TargetWidth() { return g.width; }
