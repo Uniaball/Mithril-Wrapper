@@ -1,5 +1,10 @@
 name: build-mithril
 
+# Build-only workflow: produces the libmithril artifacts (macOS dylib, iOS
+# device dylib, Linux .so), verifies their exported symbol tables, and uploads
+# them as artifacts. The smoke tests are run by test.yml, which is triggered
+# from this workflow via workflow_run and consumes these artifacts.
+
 on:
   push:
     branches: [main]
@@ -25,11 +30,26 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install ccache
+        run: brew install ccache
+
+      - name: Cache ccache (${{ matrix.name }})
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-${{ matrix.name }}-ccache-${{ github.ref }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.name }}-ccache-
+
       - name: Configure (${{ matrix.name }} arm64 Release)
-        run: cmake -S . -B build ${{ matrix.cmake_args }}
+        run: cmake -S . -B build ${{ matrix.cmake_args }} -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        env:
+          CCACHE_DIR: ~/.cache/ccache
 
       - name: Build (${{ matrix.name }})
         run: cmake --build build -j$(sysctl -n hw.ncpu)
+        env:
+          CCACHE_DIR: ~/.cache/ccache
 
       # LIBRARY_OUTPUT_DIRECTORY is fixed to ./output for both platforms; the
       # matrix instances run on separate runners with their own checkout, so
@@ -80,363 +100,48 @@ jobs:
           path: ${{ steps.locate.outputs.path }}
           if-no-files-found: error
 
-  # ---- macOS: boot the engine under MoltenVK (Metal swapchain path) -------
-  test-macos-metal:
-    runs-on: macos-26
-    needs: build-macos-ios
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Configure (macOS arm64 Release)
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build
-        run: cmake --build build -j$(sysctl -n hw.ncpu)
-
-      - name: Install Vulkan loader + MoltenVK (Homebrew)
-        run: |
-          brew install vulkan-loader molten-vk
-          brew --prefix
-          ls "$(brew --prefix)/share/vulkan/icd.d/" 2>/dev/null || true
-
-      - name: Run swapchain surface smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          clang -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl -lobjc -framework QuartzCore
-          output=$(./tests/swapchain_smoke)
-          echo "$output"
-          echo "$output" | grep -q "SWAPCHAIN SMOKE ALL PASSED"
-
-      - name: Run GL sync object smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          clang -o tests/sync_smoke tests/sync_smoke.c -ldl
-          output=$(./tests/sync_smoke 2>&1) || true
-          echo "$output"
-          echo "$output" | grep -q "SYNC SMOKE ALL PASSED"
-
-      - name: Run S6 query object smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          clang -o tests/query_smoke tests/query_smoke.c -ldl
-          output=$(./tests/query_smoke 2>&1) || true
-          echo "$output"
-          echo "$output" | grep -q "QUERY SMOKE ALL PASSED"
-
-      - name: Run S6 sampler object smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          clang -o tests/sampler_smoke tests/sampler_smoke.c -ldl
-          output=$(./tests/sampler_smoke 2>&1) || true
-          echo "$output"
-          echo "$output" | grep -q "SAMPLER SMOKE ALL PASSED"
-
-      - name: Build remaining smoke test binaries
-        run: |
-          clang -o tests/contract_smoke   tests/contract_smoke.c   -ldl
-          clang -o tests/state_smoke      tests/state_smoke.c      -ldl
-          clang -o tests/shader_smoke     tests/shader_smoke.c     -ldl
-          clang -o tests/draw_smoke       tests/draw_smoke.c       -ldl
-          clang -o tests/texture_smoke    tests/texture_smoke.c    -ldl
-          clang -o tests/fbo_smoke        tests/fbo_smoke.c        -ldl
-          clang -o tests/3d_smoke         tests/3d_smoke.c         -ldl -lm
-          clang -o tests/render3d_smoke   tests/render3d_smoke.c   -ldl -lm
-          clang -o tests/multiframe_smoke tests/multiframe_smoke.c -ldl -lm
-          clang -o tests/intattr_smoke    tests/intattr_smoke.c    -ldl
-          clang -o tests/multiubo_smoke   tests/multiubo_smoke.c   -ldl
-
-      - name: Run EGL contract smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          output=$(./tests/contract_smoke)
-          echo "$output"
-          echo "$output" | grep -q "ALL CONTRACT CHECKS PASSED"
-
-      - name: Run GL state machine smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          output=$(./tests/state_smoke)
-          echo "$output"
-          echo "$output" | grep -q "STATE SMOKE ALL PASSED"
-
-      - name: Run shader pipeline smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          output=$(./tests/shader_smoke)
-          echo "$output"
-          echo "$output" | grep -q "SHADER SMOKE ALL PASSED"
-
-      - name: Run GL->Vulkan draw smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          output=$(./tests/draw_smoke 2>&1) || true
-          echo "$output"
-          echo "$output" | grep -q "DRAW SMOKE ALL PASSED"
-
-      - name: Run integer-attribute pipeline smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          output=$(./tests/intattr_smoke 2>&1) || true
-          echo "$output"
-          echo "$output" | grep -q "INTATTR SMOKE ALL PASSED"
-
-      - name: Run GL->Vulkan texture smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          output=$(./tests/texture_smoke 2>&1) || true
-          echo "$output"
-          echo "$output" | grep -q "TEXTURE SMOKE ALL PASSED"
-
-      - name: Run GL->Vulkan state-pipeline smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          output=$(./tests/fbo_smoke 2>&1) || true
-          echo "$output"
-          echo "$output" | grep -q "FBO SMOKE ALL PASSED"
-
-      - name: Run 3D depth/perspective smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          output=$(./tests/3d_smoke 2>&1) || true
-          echo "$output"
-          echo "$output" | grep -q "3D SMOKE"
-
-      - name: Run 3D scene render smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          output=$(./tests/render3d_smoke 2>&1) || true
-          echo "$output"
-          echo "$output" | grep -q "RENDER SMOKE"
-
-      - name: Install ffmpeg (macOS)
-        run: brew install ffmpeg
-
-      - name: Convert 3D animation to MP4 + preview PNG (MoltenVK)
-        run: |
-          ffmpeg -y -framerate 30 -i tests/render3d/frame_%04d.ppm \
-                 -c:v libx264 -pix_fmt yuv420p -movflags +faststart tests/render3d.mp4
-          ffmpeg -y -i tests/render3d/frame_0000.ppm tests/render3d.png
-          ls -la tests/render3d.mp4 tests/render3d.png
-
-      - name: Upload 3D render animation (artifact, Metal)
-        uses: actions/upload-artifact@v4
-        with:
-          name: mithril-render3d-animation-metal
-          path: |
-            tests/render3d.mp4
-            tests/render3d.png
-          if-no-files-found: error
-
-      - name: Run multiframe ring smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          output=$(./tests/multiframe_smoke 2>&1) || true
-          echo "$output"
-          echo "$output" | grep -q "MULTIFRAME SMOKE ALL PASSED"
-
-      - name: Run multi-draw UBO smoke against MoltenVK
-        run: |
-          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
-          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
-          export VK_LOADER_DEBUG=error
-          export LD_LIBRARY_PATH="$PWD/output"
-          output=$(./tests/multiubo_smoke 2>&1) || true
-          echo "$output"
-          echo "$output" | grep -q "MULTIUBO SMOKE ALL PASSED"
-
-  # ---- Linux: run the contract + state machine smoke tests ----------------
-  test-linux:
+  # ---- Linux: produce libmithril.so for the Linux test job -----------------
+  build-linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Configure (Linux)
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Install ccache
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ccache
 
-      - name: Build
-        run: cmake --build build -j$(nproc)
-
-      - name: Install Vulkan runtime (lavapipe)
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers ffmpeg
-          vulkaninfo --summary 2>/dev/null | head -10 || true
-
-      - name: Build smoke test binaries
-        run: |
-          gcc -o tests/contract_smoke tests/contract_smoke.c -ldl
-          gcc -o tests/state_smoke   tests/state_smoke.c   -ldl
-          gcc -o tests/shader_smoke  tests/shader_smoke.c  -ldl
-          gcc -o tests/draw_smoke    tests/draw_smoke.c    -ldl
-          gcc -o tests/texture_smoke tests/texture_smoke.c -ldl
-          gcc -o tests/fbo_smoke     tests/fbo_smoke.c     -ldl
-          gcc -o tests/3d_smoke      tests/3d_smoke.c      -ldl -lm
-          gcc -o tests/render3d_smoke tests/render3d_smoke.c -ldl -lm
-          gcc -o tests/multiframe_smoke tests/multiframe_smoke.c -ldl -lm
-          gcc -o tests/sync_smoke tests/sync_smoke.c -ldl -lm
-          gcc -o tests/query_smoke tests/query_smoke.c -ldl
-          gcc -o tests/sampler_smoke tests/sampler_smoke.c -ldl
-          gcc -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl
-          gcc -o tests/intattr_smoke tests/intattr_smoke.c -ldl
-          gcc -o tests/multiubo_smoke tests/multiubo_smoke.c -ldl
-
-      - name: Run EGL contract smoke
-        run: |
-          output=$(./tests/contract_smoke)
-          echo "$output"
-          echo "$output" | grep -q "ALL CONTRACT CHECKS PASSED"
-
-      - name: Run GL state machine smoke
-        run: |
-          output=$(./tests/state_smoke)
-          echo "$output"
-          echo "$output" | grep -q "STATE SMOKE ALL PASSED"
-
-      - name: Run shader pipeline smoke
-        run: |
-          output=$(./tests/shader_smoke)
-          echo "$output"
-          echo "$output" | grep -q "SHADER SMOKE ALL PASSED"
-
-      - name: Run GL->Vulkan draw smoke (lavapipe)
-        run: |
-          output=$(./tests/draw_smoke)
-          echo "$output"
-          echo "$output" | grep -q "DRAW SMOKE ALL PASSED"
-
-      - name: Run integer-attribute pipeline smoke (lavapipe)
-        run: |
-          output=$(./tests/intattr_smoke)
-          echo "$output"
-          echo "$output" | grep -q "INTATTR SMOKE ALL PASSED"
-
-      - name: Run GL->Vulkan texture smoke (lavapipe)
-        run: |
-          output=$(./tests/texture_smoke)
-          echo "$output"
-          echo "$output" | grep -q "TEXTURE SMOKE ALL PASSED"
-
-      - name: Run GL->Vulkan state-pipeline smoke (lavapipe)
-        run: |
-          output=$(./tests/fbo_smoke)
-          echo "$output"
-          echo "$output" | grep -q "FBO SMOKE ALL PASSED"
-
-      - name: Run 3D depth/perspective smoke (lavapipe)
-        run: |
-          output=$(./tests/3d_smoke)
-          echo "$output"
-          echo "$output" | grep -q "3D SMOKE"
-
-      - name: Run 3D scene render smoke (lavapipe)
-        run: |
-          output=$(./tests/render3d_smoke)
-          echo "$output"
-          echo "$output" | grep -q "RENDER SMOKE"
-
-      - name: Run multiframe ring smoke (lavapipe)
-        run: |
-          output=$(./tests/multiframe_smoke)
-          echo "$output"
-          echo "$output" | grep -q "MULTIFRAME SMOKE ALL PASSED"
-
-      - name: Run GL sync object smoke (lavapipe)
-        run: |
-          output=$(./tests/sync_smoke)
-          echo "$output"
-          echo "$output" | grep -q "SYNC SMOKE ALL PASSED"
-
-      - name: Run S6 query object smoke (lavapipe)
-        run: |
-          output=$(./tests/query_smoke)
-          echo "$output"
-          echo "$output" | grep -q "QUERY SMOKE ALL PASSED"
-
-      - name: Run S6 sampler object smoke (lavapipe)
-        run: |
-          output=$(./tests/sampler_smoke)
-          echo "$output"
-          echo "$output" | grep -q "SAMPLER SMOKE ALL PASSED"
-
-      - name: Run swapchain surface smoke (offscreen on lavapipe)
-        run: |
-          output=$(./tests/swapchain_smoke)
-          echo "$output"
-          echo "$output" | grep -q "SWAPCHAIN SMOKE ALL PASSED"
-
-      - name: Run multi-draw UBO smoke (lavapipe)
-        run: |
-          output=$(./tests/multiubo_smoke)
-          echo "$output"
-          echo "$output" | grep -q "MULTIUBO SMOKE ALL PASSED"
-
-      - name: Convert 3D animation to MP4 + preview PNG (lavapipe)
-        run: |
-          ffmpeg -y -framerate 30 -i tests/render3d/frame_%04d.ppm \
-                 -c:v libx264 -pix_fmt yuv420p -movflags +faststart tests/render3d.mp4
-          ffmpeg -y -i tests/render3d/frame_0000.ppm tests/render3d.png
-          ls -la tests/render3d.mp4 tests/render3d.png
-
-      - name: Upload 3D render animation (artifact)
-        uses: actions/upload-artifact@v4
+      - name: Cache ccache (linux)
+        uses: actions/cache@v4
         with:
-          name: mithril-render3d-animation
-          path: |
-            tests/render3d.mp4
-            tests/render3d.png
-          if-no-files-found: error
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-ccache-${{ github.ref }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-
 
-      - name: Verify GL symbol table (Linux .so)
+      - name: Configure (Linux Release)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        env:
+          CCACHE_DIR: ~/.cache/ccache
+
+      - name: Build (Linux)
+        run: cmake --build build -j$(nproc)
+        env:
+          CCACHE_DIR: ~/.cache/ccache
+
+      - name: Verify exported symbols (Linux .so)
         run: |
+          [ -f output/libmithril.so ] || (echo ".so not found in output/" && exit 1)
           GL_COUNT=$(nm -D --defined-only output/libmithril.so | awk '{print $3}' | grep -cE '^gl[A-Z0-9]')
           echo "GL* defined exports: $GL_COUNT"
           [ "$GL_COUNT" -ge 342 ]
           EGL_COUNT=$(nm -D --defined-only output/libmithril.so | awk '{print $3}' | grep -c '^egl')
           echo "egl* defined exports: $EGL_COUNT"
           [ "$EGL_COUNT" -ge 40 ]
+
+      - name: Upload .so
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmithril-linux-x86_64
+          path: output/libmithril.so
+          if-no-files-found: error

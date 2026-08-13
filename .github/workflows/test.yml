@@ -1,0 +1,557 @@
+name: test-mithril
+
+# Test-only workflow: runs the smoke tests against the artifacts produced by
+# build.yml. Triggered by build.yml completing successfully on main (via
+# workflow_run), or manually via workflow_dispatch (which resolves the most
+# recent successful build run). Each job downloads the artifact it needs and
+# runs the tests on that platform's runner.
+
+on:
+  workflow_run:
+    workflows: ["build-mithril"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  # ---- macOS: boot the engine under MoltenVK (Metal path) -----------------
+  # Includes mcshape_smoke, the MC-style GUI shader test with exact pixel
+  # assertions that catches orientation/uv regressions.
+  test-macos-metal:
+    runs-on: macos-26
+    steps:
+      - name: Resolve build run
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build-mithril \
+                     --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+            echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ steps.resolve.outputs.sha }}
+
+      - name: Download macOS dylib
+        uses: actions/download-artifact@v4
+        with:
+          name: libmithril-macos-arm64
+          path: artifacts
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.resolve.outputs.run_id }}
+
+      - name: Place dylib where smoke binaries expect it
+        run: |
+          mkdir -p output
+          mv artifacts/libmithril-macos-arm64.dylib output/libmithril.dylib
+          file output/libmithril.dylib
+
+      - name: Install Vulkan loader + MoltenVK (Homebrew)
+        run: |
+          brew install vulkan-loader molten-vk
+          brew --prefix
+          ls "$(brew --prefix)/share/vulkan/icd.d/" 2>/dev/null || true
+
+      - name: Cache ccache (macos-metal)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-metal-test-ccache-${{ github.ref }}
+          restore-keys: |
+            ${{ runner.os }}-metal-test-ccache-
+
+      - name: Build smoke test binaries
+        run: |
+          export CCACHE_DIR=~/.cache/ccache
+          clang -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl -lobjc -framework QuartzCore
+          clang -o tests/sync_smoke       tests/sync_smoke.c       -ldl
+          clang -o tests/query_smoke      tests/query_smoke.c      -ldl
+          clang -o tests/sampler_smoke    tests/sampler_smoke.c    -ldl
+          clang -o tests/contract_smoke   tests/contract_smoke.c   -ldl
+          clang -o tests/state_smoke      tests/state_smoke.c      -ldl
+          clang -o tests/shader_smoke     tests/shader_smoke.c     -ldl
+          clang -o tests/draw_smoke       tests/draw_smoke.c       -ldl
+          clang -o tests/mcshape_smoke    tests/mcshape_smoke.c    -ldl
+          clang -o tests/intattr_smoke    tests/intattr_smoke.c    -ldl
+          clang -o tests/texture_smoke    tests/texture_smoke.c    -ldl
+          clang -o tests/fbo_smoke        tests/fbo_smoke.c        -ldl
+          clang -o tests/3d_smoke         tests/3d_smoke.c         -ldl -lm
+          clang -o tests/render3d_smoke   tests/render3d_smoke.c   -ldl -lm
+          clang -o tests/multiframe_smoke tests/multiframe_smoke.c -ldl -lm
+          clang -o tests/multiubo_smoke   tests/multiubo_smoke.c   -ldl
+
+      - name: Run swapchain surface smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/swapchain_smoke)
+          echo "$output"
+          echo "$output" | grep -q "SWAPCHAIN SMOKE ALL PASSED"
+
+      - name: Run GL sync object smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/sync_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "SYNC SMOKE ALL PASSED"
+
+      - name: Run S6 query object smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/query_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "QUERY SMOKE ALL PASSED"
+
+      - name: Run S6 sampler object smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/sampler_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "SAMPLER SMOKE ALL PASSED"
+
+      - name: Run EGL contract smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/contract_smoke)
+          echo "$output"
+          echo "$output" | grep -q "ALL CONTRACT CHECKS PASSED"
+
+      - name: Run GL state machine smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/state_smoke)
+          echo "$output"
+          echo "$output" | grep -q "STATE SMOKE ALL PASSED"
+
+      - name: Run shader pipeline smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/shader_smoke)
+          echo "$output"
+          echo "$output" | grep -q "SHADER SMOKE ALL PASSED"
+
+      - name: Run GL->Vulkan draw smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/draw_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "DRAW SMOKE ALL PASSED"
+
+      - name: Run MC-style GUI shader smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/mcshape_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "MCSHAPE SMOKE ALL PASSED"
+
+      - name: Run integer-attribute pipeline smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/intattr_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "INTATTR SMOKE ALL PASSED"
+
+      - name: Run GL->Vulkan texture smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/texture_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "TEXTURE SMOKE ALL PASSED"
+
+      - name: Run GL->Vulkan state-pipeline smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/fbo_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "FBO SMOKE ALL PASSED"
+
+      - name: Run 3D depth/perspective smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/3d_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "3D SMOKE"
+
+      - name: Run 3D scene render smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/render3d_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "RENDER SMOKE"
+
+      - name: Install ffmpeg (macOS)
+        run: brew install ffmpeg
+
+      - name: Convert 3D animation to MP4 + preview PNG (MoltenVK)
+        run: |
+          ffmpeg -y -framerate 30 -i tests/render3d/frame_%04d.ppm \
+                 -c:v libx264 -pix_fmt yuv420p -movflags +faststart tests/render3d.mp4
+          ffmpeg -y -i tests/render3d/frame_0000.ppm tests/render3d.png
+          ls -la tests/render3d.mp4 tests/render3d.png
+
+      - name: Upload 3D render animation (artifact, Metal)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mithril-render3d-animation-metal
+          path: |
+            tests/render3d.mp4
+            tests/render3d.png
+          if-no-files-found: error
+
+      - name: Run multiframe ring smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/multiframe_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "MULTIFRAME SMOKE ALL PASSED"
+
+      - name: Run multi-draw UBO smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/multiubo_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "MULTIUBO SMOKE ALL PASSED"
+
+  # ---- iOS Simulator: run the smoke on a simulated iOS device --------------
+  # Builds an iphonesimulator libmithril.dylib + a simulator MoltenVK and runs
+  # mcshape_smoke inside a booted iOS Simulator (closest CI approximation of
+  # the real device path). The MoltenVK build is cached to keep the job fast.
+  test-ios-simulator:
+    runs-on: macos-26
+    steps:
+      - name: Resolve build run
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build-mithril \
+                     --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+            echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ steps.resolve.outputs.sha }}
+
+      - name: Install ccache
+        run: brew install ccache
+
+      - name: Cache ccache (ios-sim)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-iossim-ccache-${{ github.ref }}
+          restore-keys: |
+            ${{ runner.os }}-iossim-ccache-
+
+      - name: Build libmithril (iOS Simulator)
+        run: |
+          cmake -S . -B build-ios-sim \
+            -DMITHRIL_IOS=ON -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build build-ios-sim -j$(sysctl -n hw.ncpu)
+          file output/libmithril.dylib
+        env:
+          CCACHE_DIR: ~/.cache/ccache
+
+      - name: Cache MoltenVK (iOS Simulator build)
+        id: cache-mvk
+        uses: actions/cache@v4
+        with:
+          path: MoltenVK/Package
+          key: moltenvk-iossim-${{ runner.os }}-v1
+
+      - name: Build MoltenVK (iOS Simulator)
+        if: steps.cache-mvk.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/KhronosGroup/MoltenVK.git
+          cd MoltenVK
+          ./fetchDependencies --iossim
+          make iossim
+          find Package -name "libMoltenVK.dylib"
+
+      - name: Locate MoltenVK dylib
+        id: mvk
+        run: |
+          MVK=$(find MoltenVK/Package -name "libMoltenVK.dylib" | head -1)
+          [ -n "$MVK" ] || { echo "libMoltenVK.dylib not found in MoltenVK/Package"; exit 1; }
+          echo "path=$MVK" >> "$GITHUB_OUTPUT"
+          file "$MVK"
+
+      - name: Ensure iOS Simulator runtime
+        run: |
+          xcrun simctl list runtimes available || true
+          if ! xcrun simctl list runtimes available | grep -q "iOS"; then
+            xcodebuild -downloadPlatform iOS
+            xcrun simctl list runtimes available
+          fi
+
+      - name: Compile mcshape_smoke for iOS Simulator
+        run: |
+          SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "arm64" ]; then TARGET=arm64-apple-ios14.0-simulator; else TARGET=x86_64-apple-ios14.0-simulator; fi
+          clang -target "$TARGET" -isysroot "$SDK" -o tests/mcshape_smoke_sim tests/mcshape_smoke.c
+          file tests/mcshape_smoke_sim
+
+      - name: Boot simulator, deploy and run mcshape
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c 'import sys,json; d=json.load(sys.stdin); [print(v["udid"]) or sys.exit(0) for typ,devs in d["devices"].items() for v in devs if v["isAvailable"]]')
+          [ -n "$UDID" ] || { echo "no available simulator device"; exit 1; }
+          echo "booting simulator $UDID"
+          xcrun simctl boot "$UDID" 2>/dev/null || true
+          xcrun simctl bootstatus "$UDID" -b
+          DATA="$HOME/Library/Developer/CoreSimulator/Devices/$UDID/data"
+          mkdir -p "$DATA/tmp/mr/output"
+          cp output/libmithril.dylib "$DATA/tmp/mr/output/"
+          cp "${{ steps.mvk.outputs.path }}" "$DATA/tmp/mr/output/"
+          cp tests/mcshape_smoke_sim "$DATA/tmp/mr/"
+          # mcshape dlopens ./output/libmithril.dylib (relative to CWD); libmithril
+          # then dlopens @loader_path/libMoltenVK.dylib, so MoltenVK must sit next
+          # to libmithril under output/.
+          xcrun simctl spawn "$UDID" /bin/sh -c 'cd /tmp/mr && ./mcshape_smoke_sim' > mcshape_sim.txt 2>&1 || true
+          cat mcshape_sim.txt
+          grep -q "MCSHAPE SMOKE ALL PASSED" mcshape_sim.txt
+
+  # ---- Linux: run the smoke tests against the Linux .so --------------------
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve build run
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build-mithril \
+                     --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+            echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ steps.resolve.outputs.sha }}
+
+      - name: Download Linux .so
+        uses: actions/download-artifact@v4
+        with:
+          name: libmithril-linux-x86_64
+          path: artifacts
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.resolve.outputs.run_id }}
+
+      - name: Install Vulkan runtime (lavapipe) + ccache
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan1 mesa-vulkan-drivers ffmpeg ccache
+          vulkaninfo --summary 2>/dev/null | head -10 || true
+
+      - name: Cache ccache (linux)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-linux-test-ccache-${{ github.ref }}
+          restore-keys: |
+            ${{ runner.os }}-linux-test-ccache-
+
+      - name: Place .so where smoke binaries expect it
+        run: |
+          mkdir -p output
+          mv artifacts/libmithril.so output/libmithril.so
+
+      - name: Build smoke test binaries
+        run: |
+          export CCACHE_DIR=~/.cache/ccache
+          gcc -o tests/contract_smoke tests/contract_smoke.c -ldl
+          gcc -o tests/state_smoke   tests/state_smoke.c   -ldl
+          gcc -o tests/shader_smoke  tests/shader_smoke.c  -ldl
+          gcc -o tests/draw_smoke    tests/draw_smoke.c    -ldl
+          gcc -o tests/mcshape_smoke tests/mcshape_smoke.c -ldl
+          gcc -o tests/texture_smoke tests/texture_smoke.c -ldl
+          gcc -o tests/fbo_smoke     tests/fbo_smoke.c     -ldl
+          gcc -o tests/3d_smoke      tests/3d_smoke.c      -ldl -lm
+          gcc -o tests/render3d_smoke tests/render3d_smoke.c -ldl -lm
+          gcc -o tests/multiframe_smoke tests/multiframe_smoke.c -ldl -lm
+          gcc -o tests/sync_smoke tests/sync_smoke.c -ldl -lm
+          gcc -o tests/query_smoke tests/query_smoke.c -ldl
+          gcc -o tests/sampler_smoke tests/sampler_smoke.c -ldl
+          gcc -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl
+          gcc -o tests/intattr_smoke tests/intattr_smoke.c -ldl
+          gcc -o tests/multiubo_smoke tests/multiubo_smoke.c -ldl
+
+      - name: Run EGL contract smoke
+        run: |
+          output=$(./tests/contract_smoke)
+          echo "$output"
+          echo "$output" | grep -q "ALL CONTRACT CHECKS PASSED"
+
+      - name: Run GL state machine smoke
+        run: |
+          output=$(./tests/state_smoke)
+          echo "$output"
+          echo "$output" | grep -q "STATE SMOKE ALL PASSED"
+
+      - name: Run shader pipeline smoke
+        run: |
+          output=$(./tests/shader_smoke)
+          echo "$output"
+          echo "$output" | grep -q "SHADER SMOKE ALL PASSED"
+
+      - name: Run GL->Vulkan draw smoke (lavapipe)
+        run: |
+          output=$(./tests/draw_smoke)
+          echo "$output"
+          echo "$output" | grep -q "DRAW SMOKE ALL PASSED"
+
+      - name: Run MC-style GUI shader smoke (lavapipe)
+        run: |
+          output=$(./tests/mcshape_smoke)
+          echo "$output"
+          echo "$output" | grep -q "MCSHAPE SMOKE ALL PASSED"
+
+      - name: Run integer-attribute pipeline smoke (lavapipe)
+        run: |
+          output=$(./tests/intattr_smoke)
+          echo "$output"
+          echo "$output" | grep -q "INTATTR SMOKE ALL PASSED"
+
+      - name: Run GL->Vulkan texture smoke (lavapipe)
+        run: |
+          output=$(./tests/texture_smoke)
+          echo "$output"
+          echo "$output" | grep -q "TEXTURE SMOKE ALL PASSED"
+
+      - name: Run GL->Vulkan state-pipeline smoke (lavapipe)
+        run: |
+          output=$(./tests/fbo_smoke)
+          echo "$output"
+          echo "$output" | grep -q "FBO SMOKE ALL PASSED"
+
+      - name: Run 3D depth/perspective smoke (lavapipe)
+        run: |
+          output=$(./tests/3d_smoke)
+          echo "$output"
+          echo "$output" | grep -q "3D SMOKE"
+
+      - name: Run 3D scene render smoke (lavapipe)
+        run: |
+          output=$(./tests/render3d_smoke)
+          echo "$output"
+          echo "$output" | grep -q "RENDER SMOKE"
+
+      - name: Run multiframe ring smoke (lavapipe)
+        run: |
+          output=$(./tests/multiframe_smoke)
+          echo "$output"
+          echo "$output" | grep -q "MULTIFRAME SMOKE ALL PASSED"
+
+      - name: Run GL sync object smoke (lavapipe)
+        run: |
+          output=$(./tests/sync_smoke)
+          echo "$output"
+          echo "$output" | grep -q "SYNC SMOKE ALL PASSED"
+
+      - name: Run S6 query object smoke (lavapipe)
+        run: |
+          output=$(./tests/query_smoke)
+          echo "$output"
+          echo "$output" | grep -q "QUERY SMOKE ALL PASSED"
+
+      - name: Run S6 sampler object smoke (lavapipe)
+        run: |
+          output=$(./tests/sampler_smoke)
+          echo "$output"
+          echo "$output" | grep -q "SAMPLER SMOKE ALL PASSED"
+
+      - name: Run swapchain surface smoke (offscreen on lavapipe)
+        run: |
+          output=$(./tests/swapchain_smoke)
+          echo "$output"
+          echo "$output" | grep -q "SWAPCHAIN SMOKE ALL PASSED"
+
+      - name: Run multi-draw UBO smoke (lavapipe)
+        run: |
+          output=$(./tests/multiubo_smoke)
+          echo "$output"
+          echo "$output" | grep -q "MULTIUBO SMOKE ALL PASSED"
+
+      - name: Convert 3D animation to MP4 + preview PNG (lavapipe)
+        run: |
+          ffmpeg -y -framerate 30 -i tests/render3d/frame_%04d.ppm \
+                 -c:v libx264 -pix_fmt yuv420p -movflags +faststart tests/render3d.mp4
+          ffmpeg -y -i tests/render3d/frame_0000.ppm tests/render3d.png
+          ls -la tests/render3d.mp4 tests/render3d.png
+
+      - name: Upload 3D render animation (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mithril-render3d-animation
+          path: |
+            tests/render3d.mp4
+            tests/render3d.png
+          if-no-files-found: error
