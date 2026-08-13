@@ -372,25 +372,19 @@ jobs:
           echo "booting simulator $UDID"
           xcrun simctl boot "$UDID" 2>/dev/null || true
           xcrun simctl bootstatus "$UDID" -b
-          DATA="$HOME/Library/Developer/CoreSimulator/Devices/$UDID/data"
-          mkdir -p "$DATA/tmp/mr/output"
-          cp output/libmithril.dylib "$DATA/tmp/mr/output/"
+          # simctl spawn resolves the program path on the HOST filesystem (the
+          # simulator shares the macOS kernel); the sim's dyld environment
+          # (DYLD_ROOT_PATH -> iOS runtime root) makes the iOS-simulator
+          # binaries link iOS-simulator libSystem. So deploy to a host path,
+          # NOT the device data dir (a path only in $DATA/tmp is "missing" to
+          # launchd -> LaunchdSimError 111).
+          mkdir -p /tmp/mr/output
+          cp output/libmithril.dylib /tmp/mr/output/
           # The extracted framework binary is named `MoltenVK`; libmithril dlopens
           # @loader_path/libMoltenVK.dylib next to itself, so rename on deploy.
-          cp "${{ steps.mvk.outputs.path }}" "$DATA/tmp/mr/output/libMoltenVK.dylib"
-          # Simulator launchd refuses to spawn unsigned/inexecutable programs;
-          # make the smoke binary explicitly executable + ad-hoc signed.
-          chmod +x tests/mcshape_smoke_sim
-          codesign -f -s - tests/mcshape_smoke_sim || true
-          cp tests/mcshape_smoke_sim "$DATA/tmp/mr/"
-          chmod +x "$DATA/tmp/mr/mcshape_smoke_sim"
-          # --- diagnostics (host side) ---
-          echo "== host view of deployed tree =="
-          ls -la "$DATA/tmp/mr/" "$DATA/tmp/mr/output/"
-          echo "== simctl device state =="
-          xcrun simctl list devices | grep -i booted || true
-          echo "== sim spawn sanity (launchctl exists in every sim) =="
-          xcrun simctl spawn "$UDID" /bin/launchctl print system 2>&1 | head -5 || true
+          cp "${{ steps.mvk.outputs.path }}" /tmp/mr/output/libMoltenVK.dylib
+          cp tests/mcshape_smoke_sim /tmp/mr/
+          chmod +x /tmp/mr/mcshape_smoke_sim
           # Run the binary directly (no /bin/sh wrapper: the macOS dyld cannot
           # load iOS-simulator binaries, so simctl spawn /bin/sh aborts).
           # SIMCTL_CHILD_* forwards env into the spawned process; the test reads
