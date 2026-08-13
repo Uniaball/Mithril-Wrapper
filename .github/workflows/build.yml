@@ -248,6 +248,22 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "RENDER SMOKE"
 
+      - name: Convert 3D animation to MP4 + preview PNG (MoltenVK)
+        run: |
+          ffmpeg -y -framerate 30 -i tests/render3d/frame_%04d.ppm \
+                 -c:v libx264 -pix_fmt yuv420p -movflags +faststart tests/render3d.mp4
+          ffmpeg -y -i tests/render3d/frame_0000.ppm tests/render3d.png
+          ls -la tests/render3d.mp4 tests/render3d.png
+
+      - name: Upload 3D render animation (artifact, Metal)
+        uses: actions/upload-artifact@v4
+        with:
+          name: mithril-render3d-animation-metal
+          path: |
+            tests/render3d.mp4
+            tests/render3d.png
+          if-no-files-found: error
+
       - name: Run multiframe ring smoke against MoltenVK
         run: |
           export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
@@ -379,23 +395,19 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "SWAPCHAIN SMOKE ALL PASSED"
 
-      - name: Install Pillow for image export
+      - name: Convert 3D animation to MP4 + preview PNG (lavapipe)
         run: |
-          python3 -m pip install --quiet --break-system-packages Pillow || \
-            python3 -m pip install --quiet Pillow
-          python3 -c "import PIL; print('Pillow', PIL.__version__)"
+          ffmpeg -y -framerate 30 -i tests/render3d/frame_%04d.ppm \
+                 -c:v libx264 -pix_fmt yuv420p -movflags +faststart tests/render3d.mp4
+          ffmpeg -y -i tests/render3d/frame_0000.ppm tests/render3d.png
+          ls -la tests/render3d.mp4 tests/render3d.png
 
-      - name: Convert render to PNG
-        run: |
-          python3 scripts/ppm_render.py tests/render3d.ppm tests/render3d.png
-          ls -la tests/render3d.ppm tests/render3d.png
-
-      - name: Upload 3D render image (artifact)
+      - name: Upload 3D render animation (artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: mithril-render3d-png
+          name: mithril-render3d-animation
           path: |
-            tests/render3d.ppm
+            tests/render3d.mp4
             tests/render3d.png
           if-no-files-found: error
 

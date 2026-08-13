@@ -1,14 +1,19 @@
-/* 3D scene smoke test: perspective + top-down camera + floor grid.
+/* 3D scene smoke test: perspective + top-down camera + floor grid, ANIMATED.
  *
  * Renders a cube standing on a checkered floor slab with a proper
  * perspective projection and a gluLookAt-style camera pitched DOWN at the
  * scene (camera above the cube, floor filling the lower half of the frame).
- * Verifies the readback through pixel assertions, then exports the
- * framebuffer to a PPM (use scripts/ppm_to_png.py to make a PNG).
+ * The cube tumbles continuously: 60 frames x 6 degrees = a full turn.
+ * Verifies the readback through pixel assertions (scene stats on key frames
+ * plus a frame-0-vs-frame-30 difference check proving the animation moves),
+ * then exports every frame to tests/render3d/frame_%04d.ppm for the CI
+ * ffmpeg pass (libx264 mp4 + preview png artifacts).
  *
  * Build (from project root):
  *   gcc -o tests/render3d_smoke tests/render3d_smoke.c -ldl -lm
  *   LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/render3d_smoke
+ *   ffmpeg -y -framerate 30 -i tests/render3d/frame_%04d.ppm -c:v libx264 \
+ *          -pix_fmt yuv420p tests/render3d.mp4
  */
 #include <dlfcn.h>
 #include <math.h>
@@ -244,59 +249,95 @@ int main(void) {
 
     float persp[16]; Perspective(0.1f, 100.0f, 55.0f, 1.0f, persp);
     float rot[16], trl[16], cam[16], model[16], mvpTmp[16], mvpM[16];
-    MatRotXY(0.5f, rot);
     MatIdent(trl); trl[14] = -4.0f;          /* cube placed at z=-4 */
-    MatMul(trl, rot, model);
     LookAt(0.0f, 5.0f, 7.0f,  0.0f, 0.0f, -4.0f, cam);  /* pitched DOWN, sky on top */
-    MatMul(cam, model, mvpTmp);
-    MatMul(persp, mvpTmp, mvpM);
-
-    cl(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     /* floor: flat world-space slab (persp*cam only, no model rotation) */
     float floorMVP[16];
     MatMul(persp, cam, floorMVP);
-    um(mvp, 1, GL_FALSE, floorMVP);
-    bd(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(grid), grid, 0x88E4);
-    da(GL_TRIANGLES, 0, gi);
 
-    /* cube: rotate + translate onto the slab */
-    um(mvp, 1, GL_FALSE, mvpM);
-    bd(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(cube), cube, 0x88E4);
-    da(GL_TRIANGLES, 0, 36);
-    fi();
+    /* -- ANIMATION: 60 frames, 6 deg/frame, the cube tumbles a full turn --- */
+    if (system("mkdir -p tests/render3d") != 0) { /* non-fatal */ }
 
     unsigned char* px = malloc((size_t)W * H * 4);
-    rp(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    unsigned char* frame0 = malloc((size_t)W * H * 4);
+    unsigned char* frame30 = malloc((size_t)W * H * 4);
+    int diff0_30 = 0;
 
-    /* -- pixel assertions (top row is y=0 in readback, matches PNG export) - */
-    int nbg = 0, nred = 0, nblue = 0, ngray = 0;
+    for (int f = 0; f < 60; ++f) {
+        float ang = (float)f * 6.0f * 3.14159265f / 180.0f;
+        MatRotXY(ang, rot);
+        MatMul(trl, rot, model);
+        MatMul(cam, model, mvpTmp);
+        MatMul(persp, mvpTmp, mvpM);
+
+        cl(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        um(mvp, 1, GL_FALSE, floorMVP);
+        bd(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(grid), grid, 0x88E4);
+        da(GL_TRIANGLES, 0, gi);
+
+        um(mvp, 1, GL_FALSE, mvpM);
+        bd(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(cube), cube, 0x88E4);
+        da(GL_TRIANGLES, 0, 36);
+        fi();
+
+        rp(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, px);
+
+        char path[64];
+        snprintf(path, sizeof path, "tests/render3d/frame_%04d.ppm", f);
+        FILE* out = fopen(path, "wb");
+        if (out) {
+            fprintf(out, "P6\n%d %d\n255\n", W, H);
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    unsigned char* p = px + ((size_t)y * W + x) * 4;
+                    fputc(p[0], out); fputc(p[1], out); fputc(p[2], out);
+                }
+            fclose(out);
+        }
+
+        if (f == 0) memcpy(frame0, px, (size_t)W * H * 4);
+        if (f == 30) memcpy(frame30, px, (size_t)W * H * 4);
+
+        /* key-frame scene stats (background + floor are frame-invariant;
+           the cube silhouette must be present at every attitude) */
+        if (f % 15 == 0 || f == 59) {
+            int nbg = 0, nred = 0, nblue = 0, ngray = 0, ncube = 0;
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    unsigned char* p = px + ((size_t)y * W + x) * 4;
+                    if (p[0] == 20 && p[1] == 23 && p[2] == 31) ++nbg;
+                    else if (p[2] < 60 && p[1] < 60 && p[0] > 200) ++nred;
+                    else if (p[0] < 60 && p[2] > 200 && p[1] < 60) ++nblue;
+                    else if (p[0] > 30 && p[0] < 100 && p[1] > 30 && p[1] < 100 &&
+                             p[2] > 30 && p[2] < 100) ++ngray;
+                    else ++ncube;   /* any other saturated cube colour */
+                }
+            CHECK(nbg > 3000, "frame %d: background (dark clear) present: %d px", f, nbg);
+            CHECK(ngray > 3000, "frame %d: floor grid fills the lower half: %d px", f, ngray);
+            CHECK(nred + nblue + ncube > 500,
+                  "frame %d: cube faces visible: %d px", f, nred + nblue + ncube);
+            if (f == 0)
+                CHECK(nred > 300, "frame 0: red cube face visible in top half: %d px", nred);
+            if (f == 30)
+                CHECK(nblue > 100, "frame 30: blue cube face turned toward camera: %d px", nblue);
+        }
+    }
+
+    /* -- animation assertion: half a turn later the frame must differ ------ */
     for (int y = 0; y < H; ++y)
         for (int x = 0; x < W; ++x) {
-            unsigned char* p = px + ((size_t)y * W + x) * 4;
-            if (p[0] == 20 && p[1] == 23 && p[2] == 31) ++nbg;
-            else if (p[2] < 60 && p[1] < 60 && p[0] > 200) ++nred;
-            else if (p[0] < 60 && p[2] > 200 && p[1] < 60) ++nblue;
-            else if (p[0] > 30 && p[0] < 100 && p[1] > 30 && p[1] < 100 &&
-                     p[2] > 30 && p[2] < 100) ++ngray;
+            const unsigned char* a = frame0 + ((size_t)y * W + x) * 4;
+            const unsigned char* b = frame30 + ((size_t)y * W + x) * 4;
+            if (a[0] != b[0] || a[1] != b[1] || a[2] != b[2]) ++diff0_30;
         }
-    CHECK(nbg > 3000, "background (dark clear) present: %d px", nbg);
-    CHECK(nred > 300, "cube red face visible in top half: %d px", nred);
-    CHECK(nblue > 100, "cube blue face visible: %d px", nblue);
-    CHECK(ngray > 3000, "floor grid fills the lower half: %d px", ngray);
+    CHECK(diff0_30 > 4000,
+          "frame 30 differs from frame 0 (%d px changed) -- cube is animating",
+          diff0_30);
 
-    /* write the framebuffer as a PPM (convert with scripts/ppm_render.py) */
-    FILE* f = fopen("tests/render3d.ppm", "wb");
-    if (f) {
-        fprintf(f, "P6\n%d %d\n255\n", W, H);
-        for (int y = 0; y < H; ++y)
-            for (int x = 0; x < W; ++x) {
-                unsigned char* p = px + ((size_t)y * W + x) * 4;
-                fputc(p[0], f); fputc(p[1], f); fputc(p[2], f);
-            }
-        fclose(f);
-        printf("wrote tests/render3d.ppm (see scripts/ppm_render.py for PNG)\n");
-    }
+    printf("wrote tests/render3d/frame_%04d.ppm..frame_%04d.ppm "
+           "(ffmpeg -framerate 30 to mp4)\n", 0, 59);
 
     dlclose(h);
     if (failures == 0) { printf("\nRENDER SMOKE ALL PASSED\n"); return 0; }

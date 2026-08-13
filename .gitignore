@@ -22,6 +22,8 @@ tests/swapchain_smoke
 tests/intattr_smoke
 tests/render3d.ppm
 tests/render3d.png
+tests/render3d.mp4
+tests/render3d/
 
 # legacy / tooling
 .trae/

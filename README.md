@@ -71,7 +71,8 @@ LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/fbo_smoke      # M5 S5 FBO/渲
 gcc -o tests/3d_smoke tests/3d_smoke.c -ldl -lm
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/3d_smoke       # 3D 深度排序 + 透视投影（mat4 uniform 全链）
 gcc -o tests/render3d_smoke tests/render3d_smoke.c -ldl -lm
-LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/render3d_smoke # 俯视场景：地板网格 + 立方体 + 像素断言，导出 tests/render3d.ppm
+LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/render3d_smoke # 俯视场景：地板网格 + 旋转立方体 + 60 帧动画，逐帧像素断言，导出 tests/render3d/frame_*.ppm
+ffmpeg -y -framerate 30 -i tests/render3d/frame_%04d.ppm -c:v libx264 -pix_fmt yuv420p tests/render3d.mp4 # PPM 帧序列→MP4 视频
 gcc -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/swapchain_smoke # M6 swapchain 契约 + surface 查询（无 Metal 时离屏降级）
 gcc -o tests/sync_smoke tests/sync_smoke.c -ldl -lm
@@ -82,7 +83,6 @@ gcc -o tests/multiframe_smoke tests/multiframe_smoke.c -ldl -lm
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/multiframe_smoke # M6 帧环：交替绘制 + 逐帧读回（需 lavapipe/loader）
 gcc -o tests/sampler_smoke tests/sampler_smoke.c -ldl
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu ./tests/sampler_smoke # M6 S6 sampler 对象生命周期 + 绑定/回退渲染（需 lavapipe/loader）
-python3 scripts/ppm_render.py tests/render3d.ppm tests/render3d.png # PPM→PNG
 ```
 
 > 本开发容器 ldd 找不到 libstdc++/libm/libgcc_s，运行 .so 相关程序需
