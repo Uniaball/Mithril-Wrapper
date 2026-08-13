@@ -239,7 +239,12 @@ void UploadTexture(uint64_t gl_id, const TexUpload& img,
     ii.arrayLayers = img.is_3d ? 1 : slices;
     ii.samples = VK_SAMPLE_COUNT_1_BIT;
     ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    // TRANSFER_SRC lets a texture used as an FBO colour attachment be read
+    // back (CmdCopyImageToBuffer, VUID-vkCmdCopyImageToBuffer-srcImage-00181).
+    // lavapipe tolerates its absence; strict implementations (MoltenVK) reject
+    // the copy -> FBO readbacks return stale/black pixels.
     ii.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+               VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;

@@ -154,7 +154,12 @@ bool CreateRbImage(RbObj& r, VkFormat fmt, uint32_t w, uint32_t h,
     ii.arrayLayers = 1;
     ii.samples = ToVkSampleCount(samples);
     ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    // TRANSFER_DST is required by vkCmdClearColorImage/vkCmdClearDepthStencilImage
+    // (VUID-vkCmdClearColorImage-image-00002 / ...-00004): FBO attachments are
+    // cleared explicitly. lavapipe tolerates its absence; strict implementations
+    // (MoltenVK) reject the clear command and drop the frame -> black FBO.
     ii.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+               VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                (IsDepthFormat(fmt) ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
                                    : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
     ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;

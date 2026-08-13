@@ -72,8 +72,13 @@ VkResult CreateTargetImage(VkImage* img, VkDeviceMemory* mem) {
     ii.arrayLayers = 1;
     ii.samples = VK_SAMPLE_COUNT_1_BIT;
     ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+    // TRANSFER_DST is required by vkCmdClearColorImage (VUID-vkCmdClearColorImage
+    // -image-00002): the default target is cleared explicitly each frame.
+    // lavapipe tolerates its absence, but strict implementations (MoltenVK)
+    // reject the clear command and the whole frame is dropped -> black screen.
     ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-               VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+               VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+               VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (g.fn.CreateImage(g.device, &ii, nullptr, img) != VK_SUCCESS)
@@ -188,7 +193,12 @@ bool CreateDepthTarget() {
     ii.arrayLayers = 1;
     ii.samples = VK_SAMPLE_COUNT_1_BIT;
     ii.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ii.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    // TRANSFER_DST is required by vkCmdClearDepthStencilImage
+    // (VUID-vkCmdClearDepthStencilImage-image-00004): the depth buffer is
+    // cleared explicitly when GL clears depth. lavapipe tolerates its absence;
+    // strict implementations (MoltenVK) reject the clear -> frame dropped.
+    ii.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+               VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     ii.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (g.fn.CreateImage(g.device, &ii, nullptr, &g.depth_image) != VK_SUCCESS) {
