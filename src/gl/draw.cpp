@@ -13,14 +13,8 @@
 namespace {
 namespace sh = mithril::shader;
 
-// M8 diagnostics: cumulative GL-layer draw counters (see gl/internal.h).
-uint64_t g_gl_draw_calls = 0;
-uint64_t g_gl_fetch_fail = 0;
-
 extern "C" uint64_t mithril_gl_draw_calls(void) { return g_gl_draw_calls; }
 extern "C" uint64_t mithril_gl_fetch_fail(void) { return g_gl_fetch_fail; }
-uint64_t GetGlDrawCalls() { return g_gl_draw_calls; }
-uint64_t GetGlFetchFail() { return g_gl_fetch_fail; }
 
 float HalfToFloat(uint16_t h) {
     uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
@@ -496,6 +490,17 @@ void DrawElementsImpl(GLenum mode, GLsizei count, GLenum type,
 }
 
 } // namespace
+
+// M8 diagnostics: cumulative GL-layer draw counters (declared extern in
+// internal.h; anonymous-namespace definitions would give them internal
+// linkage and strand the vk-layer diag on macOS, which links undefined
+// symbols as errors -- Linux .so's tolerate them silently).
+uint64_t g_gl_draw_calls = 0;
+uint64_t g_gl_fetch_fail = 0;
+
+// External-linkage accessors for the vk-layer diag (declared in internal.h).
+uint64_t GetGlDrawCalls() { return g_gl_draw_calls; }
+uint64_t GetGlFetchFail() { return g_gl_fetch_fail; }
 
 extern "C" {
 
