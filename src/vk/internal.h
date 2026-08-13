@@ -489,6 +489,16 @@ struct Engine {
     int clear_stencil = 0;
     float vp_x = 0, vp_y = 0, vp_w = 512, vp_h = 512;
     float sc_x = 0, sc_y = 0, sc_w = 512, sc_h = 512;
+
+    // M8 diagnostics: cumulative counters dumped by Present()'s periodic
+    // diag (and the swapchain smoke). They turn a black-screen device log
+    // into a bisect: growing stats_draws_vk with a dark target points at the
+    // render path (pipeline/UBO), a flat stats_draws_vk at the GL fetch layer.
+    uint64_t stats_draws_vk = 0;      // DrawOps accepted onto a frame slot
+    uint64_t stats_draws_skipped = 0; // Draw() early-outs (empty vertex stream)
+    uint64_t stats_pipe_fail = 0;     // CreateGraphicsPipelines failures
+    uint64_t stats_ubo_wrap = 0;      // dynamic UBO pool exhaustion flushes
+    uint32_t last_frame_ops = 0;      // ops recorded in the last submitted batch
 };
 
 // Engine + program/pipeline caches (storage lives in engine.cpp).

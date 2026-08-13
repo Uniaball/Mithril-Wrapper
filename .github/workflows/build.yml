@@ -157,6 +157,7 @@ jobs:
           clang -o tests/render3d_smoke   tests/render3d_smoke.c   -ldl -lm
           clang -o tests/multiframe_smoke tests/multiframe_smoke.c -ldl -lm
           clang -o tests/intattr_smoke    tests/intattr_smoke.c    -ldl
+          clang -o tests/multiubo_smoke   tests/multiubo_smoke.c   -ldl
 
       - name: Run EGL contract smoke against MoltenVK
         run: |
@@ -277,6 +278,16 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "MULTIFRAME SMOKE ALL PASSED"
 
+      - name: Run multi-draw UBO smoke against MoltenVK
+        run: |
+          export DYLD_LIBRARY_PATH="$(brew --prefix)/lib"
+          export VK_ICD_FILENAMES="$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_LOADER_DEBUG=error
+          export LD_LIBRARY_PATH="$PWD/output"
+          output=$(./tests/multiubo_smoke 2>&1) || true
+          echo "$output"
+          echo "$output" | grep -q "MULTIUBO SMOKE ALL PASSED"
+
   # ---- Linux: run the contract + state machine smoke tests ----------------
   test-linux:
     runs-on: ubuntu-latest
@@ -313,6 +324,7 @@ jobs:
           gcc -o tests/sampler_smoke tests/sampler_smoke.c -ldl
           gcc -o tests/swapchain_smoke tests/swapchain_smoke.c -ldl
           gcc -o tests/intattr_smoke tests/intattr_smoke.c -ldl
+          gcc -o tests/multiubo_smoke tests/multiubo_smoke.c -ldl
 
       - name: Run EGL contract smoke
         run: |
@@ -397,6 +409,12 @@ jobs:
           output=$(./tests/swapchain_smoke)
           echo "$output"
           echo "$output" | grep -q "SWAPCHAIN SMOKE ALL PASSED"
+
+      - name: Run multi-draw UBO smoke (lavapipe)
+        run: |
+          output=$(./tests/multiubo_smoke)
+          echo "$output"
+          echo "$output" | grep -q "MULTIUBO SMOKE ALL PASSED"
 
       - name: Convert 3D animation to MP4 + preview PNG (lavapipe)
         run: |

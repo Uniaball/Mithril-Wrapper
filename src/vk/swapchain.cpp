@@ -18,6 +18,11 @@
 
 #include <chrono>
 
+// M8 diagnostics: GL-layer draw counters (defined in gl/draw.cpp). Kept out
+// of the public header graph -- the diag only needs the two totals.
+uint64_t GetGlDrawCalls();
+uint64_t GetGlFetchFail();
+
 namespace mithril::vk {
 
 #ifdef VK_USE_PLATFORM_METAL_EXT
@@ -283,12 +288,15 @@ bool Present() {
     RetireAllInflight();
 
     // Periodic diagnostic: report what the offscreen target actually contains
-    // at its centre pixel every few seconds (the first present usually shows
-    // the still-dark loading frame, so one sample can't tell a render bug from
-    // a slow game -- a second sample minutes later can). Combined with the
-    // screen image this distinguishes a render/clear-side bug from a swapchain
-    // display/channel bug without guessing. Values are the raw target bytes in
-    // target format order (RGBA if format==37, BGRA if format==44).
+    // every few seconds. M8: five sample points (centre + four corners inset
+    // 1/8) instead of the centre alone -- the Minecraft loading screen is
+    // black at the centre but the title-screen panorama / in-game HUD fill
+    // the corners, so a corner sample distinguishes "render bug" from "black
+    // centre is normal" in one shot. Also dump the draw-path counters so a
+    // dark target bisects immediately: growing draws/gl_draws with a dark
+    // target points at the render side (pipeline/UBO), a flat gl_draws at the
+    // GL fetch layer. Values are raw target bytes in target format order
+    // (RGBA if format==37, BGRA if format==44; black is identical either way).
     {
         static auto s_diag_last = std::chrono::steady_clock::now() -
                                   std::chrono::seconds(10);
@@ -298,12 +306,33 @@ bool Present() {
             SubmitFlush(true);  // guarantee the readback reflects the latest frame
             RetireAllInflight();
             if (g.readback_map && g.read_w && g.read_h) {
-                const uint8_t* p =
-                    g.readback_map + (g.read_h / 2) * g.read_w * 4 +
-                    (g.read_w / 2) * 4;
-                ML_LOG_INFO("vk: diag target %ux%u format=%u center px = %u,%u,%u,%u",
-                            g.read_w, g.read_h, (unsigned)g.format,
-                            p[0], p[1], p[2], p[3]);
+                // Readback rows are top-down (row 0 = screen top).
+                auto px = [&](uint32_t x, uint32_t y) {
+                    const uint8_t* p =
+                        g.readback_map + ((size_t)y * g.read_w + x) * 4;
+                    return p;
+                };
+                const uint32_t w = g.read_w, h = g.read_h;
+                const uint8_t* c = px(w / 2, h / 2);
+                const uint8_t* tl = px(w / 8, h / 8);
+                const uint8_t* tr = px(w - w / 8 - 1, h / 8);
+                const uint8_t* bl = px(w / 8, h - h / 8 - 1);
+                const uint8_t* br = px(w - w / 8 - 1, h - h / 8 - 1);
+                ML_LOG_INFO(
+                    "vk: diag target %ux%u format=%u align=%llu frame_ops=%u "
+                    "draws_vk=%llu skip=%llu pipe_fail=%llu ubo_wrap=%llu "
+                    "gl_draws=%llu gl_fetch_fail=%llu | center=%u,%u,%u,%u "
+                    "tl=%u,%u,%u,%u tr=%u,%u,%u,%u bl=%u,%u,%u,%u "
+                    "br=%u,%u,%u,%u",
+                    w, h, (unsigned)g.format, (unsigned long long)g.ubo_align,
+                    g.last_frame_ops, (unsigned long long)g.stats_draws_vk,
+                    (unsigned long long)g.stats_draws_skipped,
+                    (unsigned long long)g.stats_pipe_fail,
+                    (unsigned long long)g.stats_ubo_wrap,
+                    (unsigned long long)GetGlDrawCalls(),
+                    (unsigned long long)GetGlFetchFail(), c[0], c[1], c[2], c[3],
+                    tl[0], tl[1], tl[2], tl[3], tr[0], tr[1], tr[2], tr[3],
+                    bl[0], bl[1], bl[2], bl[3], br[0], br[1], br[2], br[3]);
             } else {
                 ML_LOG_INFO("vk: diag target center px unavailable (no readback)");
             }

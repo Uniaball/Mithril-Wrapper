@@ -182,6 +182,14 @@ void FlushDirtySamplerUploads();   // defined in sampler.cpp
 
 // ---- draw-time attribute fetch helpers (defined in draw.cpp) ------------
 
+// M8 diagnostics: GL-layer draw counters, read by the vk backend's periodic
+// diag (swapchain.cpp) to bisect a dark screen -- a flat g_gl_draw_calls with
+// frames still submitting points at the GL fetch layer dropping every draw.
+extern uint64_t g_gl_draw_calls;   // DrawCommon accepted a draw
+extern uint64_t g_gl_fetch_fail;   // FetchAttribRowBits failed -> draw dropped
+uint64_t GetGlDrawCalls();         // extern "C" mithril_gl_draw_calls()
+uint64_t GetGlFetchFail();         // extern "C" mithril_gl_fetch_fail()
+
 // IEEE 754 half (binary16) -> float.
 float HalfToFloat(uint16_t h);
 

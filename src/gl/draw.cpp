@@ -12,6 +12,16 @@
 
 namespace {
 namespace sh = mithril::shader;
+
+// M8 diagnostics: cumulative GL-layer draw counters (see gl/internal.h).
+uint64_t g_gl_draw_calls = 0;
+uint64_t g_gl_fetch_fail = 0;
+
+extern "C" uint64_t mithril_gl_draw_calls(void) { return g_gl_draw_calls; }
+extern "C" uint64_t mithril_gl_fetch_fail(void) { return g_gl_fetch_fail; }
+uint64_t GetGlDrawCalls() { return g_gl_draw_calls; }
+uint64_t GetGlFetchFail() { return g_gl_fetch_fail; }
+
 float HalfToFloat(uint16_t h) {
     uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
     uint32_t exp = (h >> 10) & 0x1Fu;
@@ -256,6 +266,7 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
     int topo = GLModeToTopology(mode);
     if (topo < 0) { PUSH_ERROR(GL_INVALID_ENUM); return; }
     if (count == 0 || instance_count == 0) return;
+    ++g_gl_draw_calls;
 
     sh::Program* prog = sh::GetProgram(s::GetState().current_program);
     if (!prog || !prog->linked) { PUSH_ERROR(GL_INVALID_OPERATION); return; }
@@ -319,6 +330,7 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
                 uint32_t comps[4];
                 if (!FetchAttribRowBits(a, row_base + i, vstream.attrs[k].kind,
                                         comps)) {
+                    ++g_gl_fetch_fail;
                     PUSH_ERROR(GL_INVALID_OPERATION);
                     return;
                 }
@@ -363,6 +375,7 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
                 uint32_t comps[4];
                 if (!FetchAttribRowBits(a, src_row, istream.attrs[k].kind,
                                         comps)) {
+                    ++g_gl_fetch_fail;
                     PUSH_ERROR(GL_INVALID_OPERATION);
                     return;
                 }

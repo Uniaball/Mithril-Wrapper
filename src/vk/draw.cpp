@@ -56,7 +56,10 @@ void Draw(const DrawParams& params) {
     auto prog_it = g_programs.find(params.program);
     if (prog_it == g_programs.end()) return;
     const Program& prog = prog_it->second;
-    if (params.vertex_stream.data.empty()) return;
+    if (params.vertex_stream.data.empty()) {
+        ++g.stats_draws_skipped;
+        return;
+    }
     // Ensure the bound draw framebuffer's device resources exist (rebuilds
     // them lazily); the pass identity flows into the pipeline cache key.
     FboObj fbo;
@@ -124,10 +127,18 @@ if (!StageStream(params.vertex_stream, &op.vertex_buffer,
     VkDeviceSize range = prog.has_ubo ? prog.ubo_size : 16;
     if (g.frames[g.frame_index].ubo_next + range > kUboPoolSize) {
         ML_LOG_WARN("vk: dynamic UBO exhausted; flushing and resetting");
+        ++g.stats_ubo_wrap;
         SubmitFlush(false);
     }
     FrameSlot& frame = g.frames[g.frame_index];
-    op.ubo_offset = AlignUp(frame.ubo_next, 16);
+    // Dynamic UBO offsets must be multiples of the device's
+    // minUniformBufferOffsetAlignment (g.ubo_align, 256 on MoltenVK/iOS).
+    // Hard-coding 16 here passes lavapipe (16) and macOS Metal (16) but lands
+    // mid-way on A11-class iOS devices, where Metal's constant-buffer offset
+    // alignment is 256 -- every draw past the first in a frame then reads its
+    // uniform block from the wrong offset (zeroed/garbage MVP matrices ->
+    // black screen with no error logged).
+    op.ubo_offset = AlignUp(frame.ubo_next, g.ubo_align);
     op.ubo_range = range;
     frame.ubo_next = op.ubo_offset + range;
     if (prog.has_ubo) {
@@ -222,6 +233,7 @@ if (!StageStream(params.vertex_stream, &op.vertex_buffer,
     if (frame.occ_pool && AllocDrawOccSlot(&op.occ_slot)) op.has_occ_slot = true;
 
     frame.frame_draws.push_back(std::move(op));
+    ++g.stats_draws_vk;
     g.frame_dirty = true;
 }
 
@@ -715,6 +727,7 @@ void SubmitFlush(bool wait) {
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &frame.cmd;
+    g.last_frame_ops = (uint32_t)frame.frame_draws.size();
     if (g.fn.QueueSubmit(g.queue, 1, &si, frame.fence) != VK_SUCCESS) {
         ML_LOG_ERROR("vk: QueueSubmit failed");
         return;

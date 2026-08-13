@@ -360,7 +360,9 @@ VkPipeline GetOrCreatePipeline(const Program& prog, const DrawOp& op) {
     VkPipeline pipe = VK_NULL_HANDLE;
     if (g.fn.CreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pg, nullptr,
                                      &pipe) != VK_SUCCESS) {
-        ML_LOG_ERROR("vk: CreateGraphicsPipelines failed");
+        ML_LOG_ERROR("vk: CreateGraphicsPipelines failed (key: %s)",
+                     op.pipeline_key.c_str());
+        ++g.stats_pipe_fail;
         return VK_NULL_HANDLE;
     }
     g_pipelines.emplace(op.pipeline_key, pipe);

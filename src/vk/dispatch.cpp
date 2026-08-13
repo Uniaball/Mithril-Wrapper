@@ -217,6 +217,10 @@ bool EnsureInit() {
         g.ubo_align = props.limits.minUniformBufferOffsetAlignment;
     else
         g.ubo_align = 16;
+    ML_LOG_INFO("vk: dynamic UBO offset alignment: %llu "
+                "(minUniformBufferOffsetAlignment = %llu)",
+                (unsigned long long)g.ubo_align,
+                (unsigned long long)props.limits.minUniformBufferOffsetAlignment);
 
     // M6 stage D: timestamp + occlusion query capabilities. Timestamp support
     // needs the graphics queue's timestamp precision too (the device limits
