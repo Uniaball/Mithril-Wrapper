@@ -75,8 +75,14 @@ GLboolean APIENTRY glIsEnabledi(GLenum cap, GLuint index) {
 
 // ---- noise cancellers -------------------------------------------------------
 
-void APIENTRY glFinish() { v::SubmitFlush(true); }
-void APIENTRY glFlush() { v::SubmitFlush(false); }
+void APIENTRY glFinish() {
+    if (!g_dirty_textures.empty()) FlushDirtyTextureUploads();
+    v::SubmitFlush(true);
+}
+void APIENTRY glFlush() {
+    if (!g_dirty_textures.empty()) FlushDirtyTextureUploads();
+    v::SubmitFlush(false);
+}
 
 // ---- viewport / scissor ----------------------------------------------------
 

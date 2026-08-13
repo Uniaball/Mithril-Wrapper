@@ -592,6 +592,7 @@ void APIENTRY glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1,
     }
     if (srcX0 == srcX1 || srcY0 == srcY1 || dstX0 == dstX1 || dstY0 == dstY1)
         return;   // zero-area blit is a no-op
+    if (!g_dirty_textures.empty()) FlushDirtyTextureUploads();
     v::SubmitFlush(true);
     v::BlitFramebuffer(g_bound_read_fbo, g_bound_draw_fbo,
                        srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1,

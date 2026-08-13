@@ -16,6 +16,8 @@
 #include <objc/runtime.h>
 #endif
 
+#include <chrono>
+
 namespace mithril::vk {
 
 #ifdef VK_USE_PLATFORM_METAL_EXT
@@ -280,15 +282,19 @@ bool Present() {
 
     RetireAllInflight();
 
-    // One-shot diagnostic: report what the offscreen target actually contains
-    // at its centre pixel. Combined with the screen image this distinguishes
-    // a render/clear-side bug from a swapchain display/channel bug without
-    // guessing. Values are the raw target bytes in target format order
-    // (RGBA if format==37, BGRA if format==44).
+    // Periodic diagnostic: report what the offscreen target actually contains
+    // at its centre pixel every few seconds (the first present usually shows
+    // the still-dark loading frame, so one sample can't tell a render bug from
+    // a slow game -- a second sample minutes later can). Combined with the
+    // screen image this distinguishes a render/clear-side bug from a swapchain
+    // display/channel bug without guessing. Values are the raw target bytes in
+    // target format order (RGBA if format==37, BGRA if format==44).
     {
-        static bool s_center_diag_done = false;
-        if (!s_center_diag_done) {
-            s_center_diag_done = true;
+        static auto s_diag_last = std::chrono::steady_clock::now() -
+                                  std::chrono::seconds(10);
+        auto now = std::chrono::steady_clock::now();
+        if (now - s_diag_last >= std::chrono::seconds(5)) {
+            s_diag_last = now;
             SubmitFlush(true);  // guarantee the readback reflects the latest frame
             RetireAllInflight();
             if (g.readback_map && g.read_w && g.read_h) {

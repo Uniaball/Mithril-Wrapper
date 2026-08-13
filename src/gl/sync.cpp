@@ -46,6 +46,7 @@ GLsync APIENTRY glFenceSync(GLenum condition, GLbitfield flags) {
     auto* s = new SyncObj;
     s->condition = condition;
     s->flags = flags;
+    if (!g_dirty_textures.empty()) FlushDirtyTextureUploads();
     s->fence = v::CreateGLSync();
     std::lock_guard<std::mutex> lock(g_sync_mutex);
     g_syncs.insert(reinterpret_cast<GLsync>(s));

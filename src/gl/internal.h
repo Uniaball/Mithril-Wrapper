@@ -114,6 +114,21 @@ struct TexState {
     GLboolean fixed_sample_locations = GL_FALSE;
     std::vector<std::vector<uint8_t>> mip;      // [level] slices concatenated
     bool has_image = false;                    // level 0 present
+    // Partial re-upload tracking: per-level dirty rectangles accumulated since
+    // the last flush (union bounding box per level, so a frame of scattered
+    // glTexSubImage2D calls coalesce into one region copy). `dirty_full`
+    // forces a full rebuild of the whole texture (image redefinition, sampler
+    // change, mipmap regen) -- those paths rebuild the resident image/sampler.
+    struct DirtyRect {
+        uint32_t x = 0, y = 0, w = 0, h = 0;
+        bool valid = false;
+    };
+    std::vector<DirtyRect> dirty;
+    bool dirty_full = false;
+    void ClearDirty() {
+        dirty.clear();
+        dirty_full = false;
+    }
     // Compressed mirror: raw S3TC bytes per level (kept for GetCompressedTexImage).
     std::vector<std::vector<uint8_t>> comp;    // comp[level], empty = none
     bool has_comp = false;

@@ -311,6 +311,11 @@ void UploadTexture(uint64_t gl_id, const TexUpload& img,
     }
     it->second.sampler = s;
     it->second.levels = mips;
+    it->second.width = img.width;
+    it->second.height = img.height;
+    it->second.slices = slices;
+    it->second.is_cube = img.is_cube;
+    it->second.is_3d = img.is_3d;
 }
 
 void CreateDummyTexture() {
@@ -325,6 +330,148 @@ void CreateDummyTexture() {
     info.wrap_s = GL_REPEAT;
     info.wrap_t = GL_REPEAT;
     UploadTexture(0, img, info);
+}
+
+// In-place sub-rectangle update of an existing resident texture image.
+// Minecraft re-uploads the block atlas (1024x512) region by region; the full
+// UploadTexture path recreates the whole VkImage + copies every byte + waits
+// per call, which at tens of thousands of glTexSubImage2D calls saturated the
+// GPU and dropped the game to a few frames per second. Here only the dirty
+// rectangle is staged and copied, and the layout transition is scoped to that
+// level, so untouched regions keep their content.
+bool UploadTextureRegion(uint64_t gl_id, const TexRegion& r,
+                         const TexSamplerInfo& sampler) {
+    (void)sampler;   // sampler rebuilds are always a full upload (dirty_full)
+    std::lock_guard<std::recursive_mutex> frame_lock(g_frame_mutex);
+    if (!g.initialized || !r.mip || r.w == 0 || r.h == 0) return false;
+    auto it = g.textures.find(gl_id);
+    if (it == g.textures.end() || it->second.image == VK_NULL_HANDLE)
+        return false;
+    TexObj& t = it->second;
+
+    // The resident image must match this texture's shape/extent; a mismatch
+    // means the image was redefined since the last upload -- rebuild it.
+    if (t.is_cube != r.is_cube || t.is_3d != r.is_3d ||
+        t.width != r.width || t.height != r.height || t.slices != r.slices ||
+        t.levels <= r.level)
+        return false;
+    // 3D levels are z-planes; the region fast path stays 2D/cube/array.
+    if (r.is_3d) return false;
+
+    uint32_t lvl_w = std::max<uint32_t>(1, r.width >> r.level);
+    uint32_t lvl_h = std::max<uint32_t>(1, r.height >> r.level);
+    uint32_t slices = r.is_cube ? 6 : r.slices;
+    if (r.x + r.w > lvl_w || r.y + r.h > lvl_h) return false;
+    size_t plane = (size_t)lvl_w * lvl_h * 4;
+    if (r.mip->size() < plane * slices) return false;
+
+    // No in-flight frame may be sampling the image while we transition it.
+    RetireAllInflight();
+
+    // Stage only the dirty rows of every slice (tightly packed).
+    VkDeviceSize total = (VkDeviceSize)slices * r.h * r.w * 4;
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory staging_mem = VK_NULL_HANDLE;
+    if (CreateHostBuffer(total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &staging,
+                         &staging_mem) != VK_SUCCESS) {
+        ML_LOG_WARN("vk: texture region staging allocation failed");
+        return false;
+    }
+    void* map = nullptr;
+    if (g.fn.MapMemory(g.device, staging_mem, 0, VK_WHOLE_SIZE, 0, &map) ==
+        VK_SUCCESS) {
+        for (uint32_t s = 0; s < slices; ++s) {
+            const uint8_t* src = r.mip->data() + (size_t)s * plane +
+                                 (size_t)r.y * lvl_w * 4 + (size_t)r.x * 4;
+            uint8_t* dst = (uint8_t*)map + (size_t)s * r.h * r.w * 4;
+            for (uint32_t row = 0; row < r.h; ++row)
+                std::memcpy(dst + (size_t)row * r.w * 4,
+                            src + (size_t)row * lvl_w * 4, (size_t)r.w * 4);
+        }
+        g.fn.UnmapMemory(g.device, staging_mem);
+    }
+
+    // g.cmd/g.fence are shared with Present's blit and one-shot transitions;
+    // serialise record+submit+wait like UploadImageData.
+    std::lock_guard<std::mutex> aux_lock(g_aux_mutex);
+
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    g.fn.ResetCommandBuffer(g.cmd, 0);
+    if (g.fn.BeginCommandBuffer(g.cmd, &bi) != VK_SUCCESS) {
+        g.fn.DestroyBuffer(g.device, staging, nullptr);
+        g.fn.FreeMemory(g.device, staging_mem, nullptr);
+        return false;
+    }
+
+    // SHADER_READ_ONLY_OPTIMAL -> TRANSFER_DST_OPTIMAL, scoped to `level`.
+    {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = t.image;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, r.level, 1, 0,
+                                    slices};
+        barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        g.fn.CmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+                                0, nullptr, 1, &barrier);
+    }
+
+    // One copy per slice; each copies the same rectangle of that slice.
+    std::vector<VkBufferImageCopy> copies;
+    copies.reserve(slices);
+    for (uint32_t s = 0; s < slices; ++s) {
+        VkBufferImageCopy c{};
+        c.bufferOffset = (VkDeviceSize)s * r.h * r.w * 4;
+        c.bufferRowLength = 0;
+        c.bufferImageHeight = 0;
+        c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, r.level, s, 1};
+        c.imageOffset = {int32_t(r.x), int32_t(r.y), 0};
+        c.imageExtent = {r.w, r.h, 1};
+        copies.push_back(c);
+    }
+    g.fn.CmdCopyBufferToImage(g.cmd, staging, t.image,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              (uint32_t)copies.size(), copies.data());
+
+    // TRANSFER_DST_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL.
+    {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = t.image;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, r.level, 1, 0,
+                                    slices};
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        g.fn.CmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0,
+                                nullptr, 0, nullptr, 1, &barrier);
+    }
+
+    g.fn.EndCommandBuffer(g.cmd);
+
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &g.cmd;
+    if (g.fn.QueueSubmit(g.queue, 1, &si, g.fence) != VK_SUCCESS)
+        ML_LOG_ERROR("vk: texture region submit failed");
+    g.fn.WaitForFences(g.device, 1, &g.fence, VK_TRUE, UINT64_MAX);
+    g.fn.ResetFences(g.device, 1, &g.fence);
+
+    g.fn.DestroyBuffer(g.device, staging, nullptr);
+    g.fn.FreeMemory(g.device, staging_mem, nullptr);
+    return true;
 }
 
 void DestroyResidentTexture(uint64_t gl_id) {

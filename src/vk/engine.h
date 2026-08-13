@@ -163,6 +163,27 @@ struct TexSamplerInfo {
 void UploadTexture(uint64_t gl_id, const TexUpload& img,
                    const TexSamplerInfo& sampler);
 
+// One sub-rectangle of one mip level of a resident texture image (the
+// glTexSubImage2D fast path). `mip` points at the CPU mirror of `level`
+// (all slices concatenated, same layout as TexUpload.mip[level]).
+struct TexRegion {
+    uint32_t width = 0;    // base-level extent of the texture
+    uint32_t height = 0;
+    uint32_t slices = 1;   // slice count (cube 6, array/3D depth)
+    bool is_3d = false;
+    bool is_cube = false;
+    uint32_t level = 0;
+    uint32_t x = 0, y = 0, w = 0, h = 0;   // rectangle at `level`
+    const std::vector<uint8_t>* mip = nullptr;
+};
+// Copy `region` from the CPU mirror into the existing resident image of
+// `gl_id` (every slice gets the same rectangle; the transition only touches
+// that level, so the rest of the texture keeps its content). Returns false
+// when no compatible resident image exists yet -- callers must then fall back
+// to UploadTexture for a full rebuild.
+bool UploadTextureRegion(uint64_t gl_id, const TexRegion& region,
+                         const TexSamplerInfo& sampler);
+
 // Drop the resident GPU image of `gl_id` (glDeleteTextures path). The next
 // UploadTexture rebuilds it from scratch.
 void DestroyResidentTexture(uint64_t gl_id);

@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include <egl/internal.h>
+#include <gl/internal.h>
 #include <util/log.h>
 #include <vk/engine.h>
 
@@ -291,6 +292,10 @@ EGLBoolean eglSwapInterval(EGLDisplay dpy, EGLint interval) {
 EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
     (void)dpy;
     (void)surface;
+    // Deferred texture uploads coalesce here (once per frame); without this,
+    // updates that land between draws would only reach the GPU at the next
+    // draw, and a swap-without-draw would present stale textures.
+    if (!g_dirty_textures.empty()) FlushDirtyTextureUploads();
     // iOS: present the completed offscreen frame; Linux: no swapchain, no-op.
     // Surface loss / swapchain failure is surfaced as an EGL error so the app
     // can observe a broken present path instead of silently rendering black.

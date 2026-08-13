@@ -461,25 +461,85 @@ GLuint ActiveBound() {
 
 } // namespace
 
+// Mark `id` as needing a (re)upload. Uploads are deferred to the next draw
+// (DrawCommon) / swap boundary so a frame of scattered glTexSubImage2D calls
+// coalesce into a single region copy instead of one full-texture upload each.
+// Uploads made before vk::EnsureInit stay dirty and are replayed at the first
+// draw.
+void MarkTextureDirty(TexState& st, GLuint id) {
+    if (!st.has_image || st.mip.empty()) return;
+    g_dirty_textures.insert(id);
+}
+
+// Union a rectangle into `st`'s dirty region for `level` (the partial-upload
+// fast path). Callers update this whenever the CPU mirror of a level changes.
+void UnionDirtyRect(TexState& st, uint32_t level, uint32_t x, uint32_t y,
+                    uint32_t w, uint32_t h) {
+    if (w == 0 || h == 0) return;
+    if (st.dirty.size() <= level) st.dirty.resize((size_t)level + 1);
+    TexState::DirtyRect& d = st.dirty[level];
+    if (!d.valid) {
+        d = {x, y, w, h, true};
+    } else {
+        uint32_t nx = std::min(d.x, x);
+        uint32_t ny = std::min(d.y, y);
+        uint32_t nx2 = std::max(d.x + d.w, x + w);
+        uint32_t ny2 = std::max(d.y + d.h, y + h);
+        d = {nx, ny, nx2 - nx, ny2 - ny, true};
+    }
+}
+
+// Mark the whole (re)defined `level` of `st` dirty (glTexImage2D etc.).
+void MarkLevelRect(TexState& st, GLuint id, uint32_t level) {
+    uint32_t lvl_w = std::max<uint32_t>(1, st.width >> level);
+    uint32_t lvl_h = std::max<uint32_t>(1, st.height >> level);
+    UnionDirtyRect(st, level, 0, 0, lvl_w, lvl_h);
+    MarkTextureDirty(st, id);
+}
+
 void FlushDirtyTextureUploads() {
     std::vector<GLuint> ids(g_dirty_textures.begin(), g_dirty_textures.end());
     for (GLuint id : ids) {
         auto it = g_textures.find(id);
         if (it == g_textures.end()) { g_dirty_textures.erase(id); continue; }
-        // ReUpload is a no-op until the backend exists; ids uploaded while
-        // !IsInitialized() stay dirty for the flush at the first draw.
-        ReUpload(it->second, id);
-        if (v::IsInitialized()) g_dirty_textures.erase(id);
+        TexState& st = it->second;
+        // Backend not up yet: keep the mirror + dirty state so the flush at
+        // the first draw (DrawCommon) replays every pre-init upload.
+        if (!v::IsInitialized()) continue;
+        if (!st.has_image || st.mip.empty()) {
+            st.ClearDirty();
+            g_dirty_textures.erase(id);
+            continue;
+        }
+        // Fast path: in-place region copies of the dirty rectangles into the
+        // existing resident image. Anything the engine cannot do (no resident
+        // image yet, image redefined, sampler changed, mipmap regen) falls
+        // back to a full ReUpload.
+        bool done = !st.dirty_full;
+        for (uint32_t l = 0; done && l < st.dirty.size(); ++l) {
+            const TexState::DirtyRect& d = st.dirty[l];
+            if (!d.valid) continue;
+            v::TexRegion r;
+            r.width = st.width;
+            r.height = st.height;
+            r.slices = (uint32_t)st.SliceCount();
+            r.is_3d = st.Is3D();
+            r.is_cube = st.IsCube();
+            r.level = l;
+            r.x = d.x;
+            r.y = d.y;
+            r.w = d.w;
+            r.h = d.h;
+            r.mip = &st.mip[l];
+            if (!v::UploadTextureRegion(id, r, ToSamplerInfo(st))) {
+                done = false;
+                break;
+            }
+        }
+        if (!done) ReUpload(st, id);
+        st.ClearDirty();
+        g_dirty_textures.erase(id);
     }
-}
-
-// Mark `id` as needing a (re)upload and try it immediately when the backend
-// is already up. Uploads made before vk::EnsureInit are replayed by
-// FlushDirtyTextureUploads at the first draw.
-void MarkTextureDirty(TexState& st, GLuint id) {
-    if (!st.has_image || st.mip.empty()) return;
-    g_dirty_textures.insert(id);
-    if (v::IsInitialized()) FlushDirtyTextureUploads();
 }
 
 extern "C" {
@@ -601,7 +661,7 @@ void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internalformat,
         StoreSlices(st, (uint32_t)level, 0, st.depth, 0, 0, (uint32_t)width, 1,
                     format, type, pixels);
 
-    if (level == 0) MarkTextureDirty(st, id);
+    MarkLevelRect(st, id, (uint32_t)level);
 }
 
 void APIENTRY glTexImage1D(GLenum target, GLint level, GLint internalformat,
@@ -645,7 +705,7 @@ void APIENTRY glTexImage3D(GLenum target, GLint level, GLint internalformat,
         (uint32_t)depth == st.depth)
         StoreSlices(st, (uint32_t)level, 0, st.depth, 0, 0, (uint32_t)width,
                     (uint32_t)height, format, type, pixels);
-    if (level == 0) MarkTextureDirty(st, id);
+    MarkLevelRect(st, id, (uint32_t)level);
 }
 
 // ---- multisample textures (S4) ---------------------------------------------
@@ -679,7 +739,7 @@ void TexImageMultisampleCommon(GLenum target, GLsizei samples,
         // Single-sample CPU mirror (zeroed) so FBO attachment + readback
         // behave like a normal texture.
         st.mip.push_back(std::vector<uint8_t>(st.SliceCount() * (size_t)w * h * 4, 0));
-        MarkTextureDirty(st, id);
+        MarkLevelRect(st, id, 0);
     }
 }
 
@@ -733,7 +793,9 @@ void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint xoffset,
         StoreSlices(st, (uint32_t)level, slice, 1, (uint32_t)xoffset,
                     (uint32_t)yoffset, (uint32_t)width, (uint32_t)height,
                     format, type, pixels);
-    if (level == 0) MarkTextureDirty(st, id);
+    UnionDirtyRect(st, (uint32_t)level, (uint32_t)xoffset, (uint32_t)yoffset,
+                   (uint32_t)width, (uint32_t)height);
+    MarkTextureDirty(st, id);
 }
 
 void APIENTRY glTexSubImage3D(GLenum target, GLint level, GLint xoffset,
@@ -768,7 +830,9 @@ void APIENTRY glTexSubImage3D(GLenum target, GLint level, GLint xoffset,
         StoreSlices(st, (uint32_t)level, (uint32_t)zoffset, (uint32_t)depth,
                     (uint32_t)xoffset, (uint32_t)yoffset, (uint32_t)width,
                     (uint32_t)height, format, type, pixels);
-    if (level == 0) MarkTextureDirty(st, id);
+    UnionDirtyRect(st, (uint32_t)level, (uint32_t)xoffset, (uint32_t)yoffset,
+                   (uint32_t)width, (uint32_t)height);
+    MarkTextureDirty(st, id);
 }
 
 void APIENTRY glTexSubImage1D(GLenum target, GLint level, GLint xoffset,
@@ -805,6 +869,7 @@ void APIENTRY glGenerateMipmap(GLenum target) {
         w = std::max<uint32_t>(1, w / 2);
         h = std::max<uint32_t>(1, h / 2);
     }
+    st.dirty_full = true;   // mip chain rebuilt; full re-upload
     MarkTextureDirty(st, id);
 }
 
@@ -894,6 +959,7 @@ void APIENTRY glTexParameteri(GLenum target, GLenum pname, GLint param) {
             PUSH_ERROR(GL_INVALID_ENUM);
             return;
     }
+    st.dirty_full = true;   // sampler baked into the resident image; rebuild
     MarkTextureDirty(st, id);
 }
 
@@ -1060,7 +1126,7 @@ void APIENTRY glCompressedTexImage2D(GLenum target, GLint level,
         DecodeCompressedPlane(SlicePtr(st, level, slice), (const uint8_t*)data,
                               lvl_w, lvl_h, internalformat);
     }
-    if (level == 0) MarkTextureDirty(st, id);
+    MarkLevelRect(st, id, (uint32_t)level);
 }
 
 void APIENTRY glCompressedTexImage1D(GLenum target, GLint level,
@@ -1105,7 +1171,7 @@ void APIENTRY glCompressedTexImage3D(GLenum target, GLint level,
         st.has_comp = true;
         st.comp_format = internalformat;
     }
-    if (level == 0) MarkTextureDirty(st, id);
+    MarkLevelRect(st, id, (uint32_t)level);
 }
 
 void APIENTRY glCompressedTexSubImage2D(GLenum target, GLint level,
@@ -1149,7 +1215,9 @@ void APIENTRY glCompressedTexSubImage2D(GLenum target, GLint level,
             st.comp_format = format;
         }
     }
-    if (level == 0) MarkTextureDirty(st, id);
+    UnionDirtyRect(st, (uint32_t)level, (uint32_t)xoffset, (uint32_t)yoffset,
+                   (uint32_t)width, (uint32_t)height);
+    MarkTextureDirty(st, id);
 }
 
 void APIENTRY glCompressedTexSubImage3D(GLenum target, GLint level,
@@ -1194,7 +1262,9 @@ void APIENTRY glCompressedTexSubImage3D(GLenum target, GLint level,
                 (uint32_t)height, format);
         }
     }
-    if (level == 0) MarkTextureDirty(st, id);
+    UnionDirtyRect(st, (uint32_t)level, (uint32_t)xoffset, (uint32_t)yoffset,
+                   (uint32_t)width, (uint32_t)height);
+    MarkTextureDirty(st, id);
 }
 
 void APIENTRY glGetCompressedTexImage(GLenum target, GLint level, void* pixels) {
@@ -1247,7 +1317,7 @@ void APIENTRY glCopyTexImage1D(GLenum target, GLint level,
     if (!st.has_image) return;
     AllocLevel(st, (uint32_t)level);
     CopyFramebufferToTexture(st, level, 0, 0, x, y, width, 1);
-    if (level == 0) MarkTextureDirty(st, id);
+    MarkLevelRect(st, id, (uint32_t)level);
 }
 
 void APIENTRY glCopyTexImage2D(GLenum target, GLint level,
@@ -1290,7 +1360,7 @@ void APIENTRY glCopyTexImage2D(GLenum target, GLint level,
     } else {
         CopyFramebufferToTexture(st, (GLint)level, 0, 0, x, y, width, height);
     }
-    if (level == 0) MarkTextureDirty(st, id);
+    MarkLevelRect(st, id, (uint32_t)level);
 }
 
 void APIENTRY glCopyTexSubImage1D(GLenum target, GLint level, GLint xoffset,
@@ -1303,6 +1373,8 @@ void APIENTRY glCopyTexSubImage1D(GLenum target, GLint level, GLint xoffset,
         PUSH_ERROR(GL_INVALID_OPERATION);
     }
     CopyFramebufferToTexture(st, level, xoffset, 0, x, y, width, 1);
+    UnionDirtyRect(st, (uint32_t)level, (uint32_t)xoffset, 0, (uint32_t)width, 1);
+    MarkTextureDirty(st, id);
 }
 
 void APIENTRY glCopyTexSubImage2D(GLenum target, GLint level, GLint xoffset,
@@ -1339,7 +1411,9 @@ void APIENTRY glCopyTexSubImage2D(GLenum target, GLint level, GLint xoffset,
     } else {
         CopyFramebufferToTexture(st, level, xoffset, yoffset, x, y, width, height);
     }
-    if (level == 0) MarkTextureDirty(st, id);
+    UnionDirtyRect(st, (uint32_t)level, (uint32_t)xoffset, (uint32_t)yoffset,
+                   (uint32_t)width, (uint32_t)height);
+    MarkTextureDirty(st, id);
 }
 
 void APIENTRY glCopyTexSubImage3D(GLenum target, GLint level, GLint xoffset,
@@ -1368,7 +1442,9 @@ void APIENTRY glCopyTexSubImage3D(GLenum target, GLint level, GLint xoffset,
         std::memcpy(SlicePtr(st, (uint32_t)level, (uint32_t)zoffset) +
                         ((size_t)(yoffset + r) * lvl_w + xoffset) * 4,
                     tmp.data() + (size_t)r * width * 4, (size_t)width * 4);
-    if (level == 0) MarkTextureDirty(st, id);
+    UnionDirtyRect(st, (uint32_t)level, (uint32_t)xoffset, (uint32_t)yoffset,
+                   (uint32_t)width, (uint32_t)height);
+    MarkTextureDirty(st, id);
 }
 
 // ---- buffer textures (glTexBuffer) ------------------------------------------
@@ -1407,7 +1483,7 @@ void APIENTRY glTexBuffer(GLenum target, GLenum internalformat, GLuint buffer) {
     st.mip.clear();
     if (st.has_image) {
         st.mip.push_back(data);   // RGBA8 texel stream == the mirror
-        MarkTextureDirty(st, id);
+        MarkLevelRect(st, id, 0);
     }
 }
 

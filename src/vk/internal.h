@@ -177,6 +177,11 @@ struct TexObj {
     VkImageView view = VK_NULL_HANDLE;
     VkSampler sampler = VK_NULL_HANDLE;
     uint32_t levels = 1;
+    uint32_t width = 0;   // base-level extent (validates in-place region updates)
+    uint32_t height = 0;
+    uint32_t slices = 1;  // array layers / cube faces / 3D depth
+    bool is_cube = false;
+    bool is_3d = false;
 };
 
 // S5: renderbuffer object (glRenderbufferStorage). Backed by a device-local
