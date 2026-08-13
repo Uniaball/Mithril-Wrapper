@@ -100,13 +100,9 @@ void Draw(const DrawParams& params) {
         StateSignature(params.pipeline);
     op.pipeline_key = base_key + "|RP" + (op.rp_sig.empty() ? "default" : op.rp_sig);
 
-    ML_LOG_DEBUG("vk: draw staging (vstride=%u vbytes=%zu ic=%u)", op.v_stride,
-                 params.vertex_stream.data.size() * sizeof(float),
-                 (unsigned)op.instance_count);
     if (!StageStream(params.vertex_stream, &op.vertex_buffer,
                      &op.vertex_mem))
         return;
-    ML_LOG_DEBUG("vk: draw staged vb");
     if (!op.i_attrs.empty() &&
         !StageStream(params.instance_stream, &op.instance_buffer,
                      &op.instance_mem)) {
@@ -164,9 +160,6 @@ void Draw(const DrawParams& params) {
     dsa.descriptorPool = frame.desc_pool;
     dsa.descriptorSetCount = 1;
     dsa.pSetLayouts = &g.set_layout;
-    ML_LOG_DEBUG("vk: draw pre-alloc desc (fbo=%d align=%llu next=%llu)",
-                 (int)g.bound_draw_fbo, (unsigned long long)g.ubo_align,
-                 (unsigned long long)frame.ubo_next);
     if (g.fn.AllocateDescriptorSets(g.device, &dsa, &op.desc_set) !=
         VK_SUCCESS) {
         ML_LOG_ERROR("vk: AllocateDescriptorSets failed");
@@ -182,8 +175,6 @@ void Draw(const DrawParams& params) {
         }
         return;
     }
-    ML_LOG_DEBUG("vk: draw desc allocated (%d writes up front)",
-                 (int)(1 + params.sampler_binds.size()));
     VkDescriptorBufferInfo dbi{};
     dbi.buffer = frame.ubo;
     dbi.range = op.ubo_range;
