@@ -215,6 +215,7 @@ if (!StageStream(params.vertex_stream, &op.vertex_buffer,
         di.imageView = tex->view;
         di.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         tis.push_back(di);
+        op.tex_binds.push_back({sb.binding, di});
         VkWriteDescriptorSet ws{};
         ws.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         ws.dstSet = op.desc_set;
@@ -722,6 +723,50 @@ void SubmitFlush(bool wait) {
     }
 
     g.fn.EndCommandBuffer(frame.cmd);
+
+    // Capture a one-shot introspection of this batch for Present()'s diag.
+    {
+        auto& d = g.last_diag;
+        d.frame_ops = (uint32_t)frame.frame_draws.size();
+        d.pipe_miss_delta = g.stats_pipe_miss - g.last_pipe_miss;
+        g.last_pipe_miss = g.stats_pipe_miss;
+        d.clear_applied = g.pending_clear;
+        d.clear[0] = g.clear_r;
+        d.clear[1] = g.clear_g;
+        d.clear[2] = g.clear_b;
+        d.clear[3] = g.clear_a;
+        d.clear_mask = (uint32_t)g.clear_mask;
+        size_t n = frame.frame_draws.size() < 4 ? frame.frame_draws.size() : 4;
+        d.nops = (uint32_t)n;
+        for (size_t i = 0; i < n; ++i) {
+            const DrawOp& op = frame.frame_draws[i];
+            Engine::DiagOp& o = d.ops[i];
+            o.program = op.program;
+            o.ubo_offset = (uint32_t)op.ubo_offset;
+            o.ubo_range = (uint32_t)op.ubo_range;
+            const uint8_t* p = frame.ubo_map + op.ubo_offset;
+            uint64_t v = 0;
+            for (int b = 0; b < 8; ++b) v |= (uint64_t)p[b] << (8 * b);
+            o.ubo8 = v;
+            o.vertex_count = op.vertex_count;
+            o.index_count = op.index_count;
+            o.instance_count = op.instance_count;
+            o.topology = op.topology;
+            o.tex_count = (uint32_t)op.tex_binds.size();
+            o.tex0_has_view = !op.tex_binds.empty() &&
+                              op.tex_binds[0].second.imageView != VK_NULL_HANDLE
+                                  ? 1
+                                  : 0;
+            o.vp[0] = g.vp_x;
+            o.vp[1] = g.vp_y;
+            o.vp[2] = g.vp_w;
+            o.vp[3] = g.vp_h;
+            o.sc[0] = g.sc_x;
+            o.sc[1] = g.sc_y;
+            o.sc[2] = g.sc_w;
+            o.sc[3] = g.sc_h;
+        }
+    }
 
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;

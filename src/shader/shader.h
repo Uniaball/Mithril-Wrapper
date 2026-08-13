@@ -97,9 +97,46 @@ struct Program {
 
 // Compile `source` for `stage` into SPIR-V words. Returns false and fills
 // `info` with the glslang diagnostics on failure. Thread-safe; results cached
-// by (stage, source) hash.
+// by (stage, source, forced-offset-layout) hash. When `forced_offset` is
+// non-null the synthetic mithril_GlobalBlock members are emitted with
+// explicit layout(offset=...) equal to the map values -- glLinkProgram uses
+// this to relocate a stage's block away from a cross-stage collision (each
+// stage's synthetic block independently starts at offset 0; MC-style shaders
+// declare ModelViewMat/ProjMat in the VS and ColorModulator in the FS, and
+// the merged offsets overlap, corrupting the composed UBO and blacking out
+// every such program). The map must cover every loose uniform in `source`.
 bool CompileStage(GLenum stage, const std::string& source,
-                  std::vector<uint32_t>& out_spirv, std::string& out_info);
+                  std::vector<uint32_t>& out_spirv, std::string& out_info,
+                  const std::unordered_map<std::string, uint32_t>*
+                      forced_offset = nullptr);
+
+// One member of a stage-uniform block, with the byte offset each stage
+// compiled for it (they coincide until a cross-stage relocation patches one
+// stage; see ReflectStageUbos).
+struct StageUboMember {
+    std::string name;
+    uint32_t vs_offset = 0;
+    uint32_t fs_offset = 0;
+    uint32_t size = 0;
+    bool in_vs = false;
+    bool in_fs = false;
+};
+
+// One uniform block as referenced across the linked stages (keyed by block
+// name, e.g. the synthetic "mithril_GlobalBlock").
+struct StageUbo {
+    std::string name;
+    uint32_t binding = 0;
+    uint32_t data_size = 0;
+    bool vs = false;
+    bool fs = false;
+    std::vector<StageUboMember> members;
+};
+
+// Reflect the per-stage uniform blocks of the linked stage SPIR-V (used by
+// glLinkProgram to detect cross-stage member-offset collisions).
+std::vector<StageUbo> ReflectStageUbos(const std::vector<uint32_t>& vs_words,
+                                       const std::vector<uint32_t>& fs_words);
 
 // Reflect a linked program: extract uniform + attribute names/locations from
 // the stage SPIR-V via SPIRV-Cross. Always succeeds (empty result on malformed

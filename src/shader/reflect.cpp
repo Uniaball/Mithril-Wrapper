@@ -186,4 +186,64 @@ void ReflectProgram(Program& prog) {
     }
 }
 
+// Per-stage uniform-block introspection used by glLinkProgram to detect
+// cross-stage member-offset collisions: each stage's synthetic
+// mithril_GlobalBlock independently starts its members at offset 0, so an
+// MC-style program (mat4 ModelViewMat/ProjMat in the VS, vec4 ColorModulator
+// in the FS) merges to overlapping offsets and the composed UBO corrupts
+// (ModelViewMat's first 16 bytes get overwritten with ColorModulator --
+// every such draw blacks out). Blocks are keyed by name; members merged by
+// name with per-stage origin and size so the caller can relocate one stage's
+// members behind the other's and recompile that stage with explicit offsets.
+std::vector<StageUbo> ReflectStageUbos(const std::vector<uint32_t>& vs_words,
+                                       const std::vector<uint32_t>& fs_words) {
+    std::vector<StageUbo> out;
+
+    auto reflect_stage = [&](const std::vector<uint32_t>& words, bool vs) {
+        if (words.empty()) return;
+        try {
+            spirv_cross::Compiler compiler(words.data(), words.size());
+            auto res = compiler.get_shader_resources();
+            for (auto& r : res.uniform_buffers) {
+                const spirv_cross::SPIRType& t = compiler.get_type(r.base_type_id);
+                StageUbo* u = nullptr;
+                for (auto& s : out)
+                    if (s.name == r.name) { u = &s; break; }
+                if (!u) {
+                    StageUbo nu;
+                    nu.name = r.name;
+                    out.push_back(std::move(nu));
+                    u = &out.back();
+                    u->binding = compiler.get_decoration(r.id, spv::DecorationBinding);
+                    u->data_size = (uint32_t)compiler.get_declared_struct_size(t);
+                }
+                for (uint32_t i = 0; i < t.member_types.size(); ++i) {
+                    std::string name = compiler.get_member_name(r.base_type_id, i);
+                    if (name.empty()) continue;
+                    uint32_t off = compiler.get_member_decoration(
+                        r.base_type_id, i, spv::DecorationOffset);
+                    uint32_t sz = (uint32_t)compiler.get_declared_struct_member_size(t, i);
+                    StageUboMember* m = nullptr;
+                    for (auto& e : u->members)
+                        if (e.name == name) { m = &e; break; }
+                    if (!m) {
+                        u->members.push_back({name});
+                        m = &u->members.back();
+                    }
+                    m->size = sz;
+                    if (vs) { m->in_vs = true; m->vs_offset = off; }
+                    else    { m->in_fs = true; m->fs_offset = off; }
+                }
+                if (vs) u->vs = true; else u->fs = true;
+            }
+        } catch (const std::exception& e) {
+            ML_LOG_WARN("SPIRV-Cross stage UBO reflection failed: %s", e.what());
+        }
+    };
+
+    reflect_stage(vs_words, true);
+    reflect_stage(fs_words, false);
+    return out;
+}
+
 } // namespace mithril::shader

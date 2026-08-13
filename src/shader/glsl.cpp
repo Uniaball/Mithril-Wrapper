@@ -204,8 +204,17 @@ bool parse_declarator(const std::string& d, std::string& name, std::string& arr)
 }
 
 // Fold loose non-opaque uniforms into a synthetic UBO (ANGLE-style), mirroring
-// the retired renderer's proven preprocessor pass.
-void wrap_loose_uniforms(std::string& source) {
+// the retired renderer's proven preprocessor pass. When `forced_offset` is
+// non-null it must contain one entry per folded member: the member is emitted
+// with that explicit layout(offset=...) qualifier. glLinkProgram uses this to
+// relocate a stage's block behind the other stage's members when the two
+// stages' synthetic blocks collide (both independently start at offset 0 --
+// MC's shaders declare ModelViewMat/ProjMat in the VS and ColorModulator in
+// the FS, and the merged offsets overlapped, corrupting the composed UBO and
+// blacking out every such program on device).
+void wrap_loose_uniforms(
+    std::string& source,
+    const std::unordered_map<std::string, uint32_t>* forced_offset = nullptr) {
     struct Member { std::string decl; std::string name; };
     struct Erase { size_t pos; size_t len; };
     std::vector<Member> members;
@@ -284,7 +293,18 @@ void wrap_loose_uniforms(std::string& source) {
     }
 
     std::string injection = "\nuniform mithril_GlobalBlock {\n";
-    for (const auto& u : members) injection += "    " + u.decl + ";\n";
+    for (const auto& u : members) {
+        if (forced_offset) {
+            auto it = forced_offset->find(u.name);
+            if (it != forced_offset->end())
+                injection += "    layout(offset=" + std::to_string(it->second) +
+                             ") " + u.decl + ";\n";
+            else
+                injection += "    " + u.decl + ";\n";
+        } else {
+            injection += "    " + u.decl + ";\n";
+        }
+    }
     injection += "} _m;\n\n";
     for (const auto& u : members) injection += "#define " + u.name + " _m." + u.name + "\n";
     injection += "\n";
@@ -310,12 +330,16 @@ Cache& cache() { static Cache c; return c; }
 } // namespace
 
 bool CompileStage(GLenum stage, const std::string& src,
-                  std::vector<uint32_t>& spirv, std::string& info) {
+                  std::vector<uint32_t>& spirv, std::string& info,
+                  const std::unordered_map<std::string, uint32_t>* forced_offset) {
     glslang_init();
     EShLanguage esh_stage = to_esh_stage(stage);
     if (esh_stage == EShLangCount) { info = "unsupported shader stage"; return false; }
 
     uint64_t key = fnv1a(src) ^ (uint64_t)stage * 0x9E3779B97F4A7C15ULL;
+    if (forced_offset)
+        for (const auto& kv : *forced_offset)
+            key ^= fnv1a(kv.first + ":" + std::to_string(kv.second));
     {
         std::lock_guard<std::mutex> lk(cache().mu);
         auto it = cache().entries.find(key);
@@ -331,7 +355,7 @@ bool CompileStage(GLenum stage, const std::string& src,
     std::string unwrapped = source;
     bool wrapped = false;
     try {
-        wrap_loose_uniforms(source);
+        wrap_loose_uniforms(source, forced_offset);
         wrapped = true;
     } catch (const std::exception& e) {
         ML_LOG_WARN("wrap_loose_uniforms threw (%s); using unwrapped source", e.what());

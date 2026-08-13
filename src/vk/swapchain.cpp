@@ -22,6 +22,9 @@
 // of the public header graph -- the diag only needs the two totals.
 uint64_t GetGlDrawCalls();
 uint64_t GetGlFetchFail();
+// M8 device-black-screen probe: renders one fullscreen red quad through the
+// real GL draw path (see gl/draw.cpp) on the very first Present() call.
+void RunGLSelfTestOnce();
 
 namespace mithril::vk {
 
@@ -269,6 +272,13 @@ bool Present() {
     // callers and the Linux lavapipe test contract see EGL_TRUE; only a real
     // swapchain failure (acquire/present error on Apple) is reported as failure.
     if (!EnsureInit()) return true;
+    // M8 device black-screen probe: on the very first swap, render one
+    // fullscreen red quad through the real GL->vk draw path (via the GL
+    // layer, like any app draw) and leave it on the target. Present() below
+    // then blits it out, so the screen shows red for the first frame if the
+    // engine's render/present chain works at all -- the app's own (possibly
+    // black) content overwrites it afterwards. Env-gated: MITHRIL_SELFTEST_FRAME=1.
+    RunGLSelfTestOnce();
     // eglSwapBuffers has implicit flush semantics (EGL 1.5 §3.9.4): any GL
     // commands recorded for the default framebuffer must reach the GPU before
     // the present. Minecraft's render loop relies on this -- it does not call
@@ -276,15 +286,6 @@ bool Present() {
     // the pending frame through SubmitFlush the offscreen target is blitted
     // while still in its initial undefined contents and the screen stays black.
     if (g.frame_dirty) SubmitFlush(false);
-#ifdef VK_USE_PLATFORM_METAL_EXT
-    // No native window (offscreen fallback: the contract smoke passes a fake
-    // non-CAMetalLayer pointer, which SetNativeLayer rejected) means there is
-    // nothing to present to -- this swap is a successful no-op, matching the
-    // offscreen lavapipe contract. Only a live layer that fails to build a
-    // swapchain is a genuine present failure.
-    if (!g.native_layer) return true;
-    if (!EnsureSwapchain()) return false;
-
     RetireAllInflight();
 
     // Periodic diagnostic: report what the offscreen target actually contains
@@ -320,24 +321,54 @@ bool Present() {
                 const uint8_t* br = px(w - w / 8 - 1, h - h / 8 - 1);
                 ML_LOG_INFO(
                     "vk: diag target %ux%u format=%u align=%llu frame_ops=%u "
-                    "draws_vk=%llu skip=%llu pipe_fail=%llu ubo_wrap=%llu "
-                    "gl_draws=%llu gl_fetch_fail=%llu | center=%u,%u,%u,%u "
-                    "tl=%u,%u,%u,%u tr=%u,%u,%u,%u bl=%u,%u,%u,%u "
-                    "br=%u,%u,%u,%u",
+                    "draws_vk=%llu skip=%llu pipe_fail=%llu miss=%llu "
+                    "ubo_wrap=%llu gl_draws=%llu gl_fetch_fail=%llu "
+                    "selftest=%d clear=%d(%.2f,%.2f,%.2f,%.2f,m=%u) | "
+                    "center=%u,%u,%u,%u tl=%u,%u,%u,%u tr=%u,%u,%u,%u "
+                    "bl=%u,%u,%u,%u br=%u,%u,%u,%u",
                     w, h, (unsigned)g.format, (unsigned long long)g.ubo_align,
                     g.last_frame_ops, (unsigned long long)g.stats_draws_vk,
                     (unsigned long long)g.stats_draws_skipped,
                     (unsigned long long)g.stats_pipe_fail,
+                    (unsigned long long)g.stats_pipe_miss,
                     (unsigned long long)g.stats_ubo_wrap,
                     (unsigned long long)GetGlDrawCalls(),
-                    (unsigned long long)GetGlFetchFail(), c[0], c[1], c[2], c[3],
-                    tl[0], tl[1], tl[2], tl[3], tr[0], tr[1], tr[2], tr[3],
-                    bl[0], bl[1], bl[2], bl[3], br[0], br[1], br[2], br[3]);
+                    (unsigned long long)GetGlFetchFail(),
+                    g.selftest_done ? 1 : 0,
+                    g.last_diag.clear_applied ? 1 : 0, g.last_diag.clear[0],
+                    g.last_diag.clear[1], g.last_diag.clear[2],
+                    g.last_diag.clear[3], g.last_diag.clear_mask,
+                    c[0], c[1], c[2], c[3], tl[0], tl[1], tl[2], tl[3],
+                    tr[0], tr[1], tr[2], tr[3], bl[0], bl[1], bl[2], bl[3],
+                    br[0], br[1], br[2], br[3]);
+                for (uint32_t i = 0; i < g.last_diag.nops; ++i) {
+                    const auto& o = g.last_diag.ops[i];
+                    ML_LOG_INFO(
+                        "vk: diag op%u prog=%llu off=%u rng=%u ubo8=%llx "
+                        "v=%u idx=%u inst=%u m=%u tx=%u/%u vp=%d,%d,%d,%d "
+                        "sc=%d,%d,%d,%d",
+                        i, (unsigned long long)o.program, o.ubo_offset,
+                        o.ubo_range, (unsigned long long)o.ubo8, o.vertex_count,
+                        o.index_count, o.instance_count, o.topology, o.tex_count,
+                        o.tex0_has_view, o.vp[0], o.vp[1], o.vp[2], o.vp[3],
+                        o.sc[0], o.sc[1], o.sc[2], o.sc[3]);
+                }
             } else {
                 ML_LOG_INFO("vk: diag target center px unavailable (no readback)");
             }
         }
     }
+
+#ifdef VK_USE_PLATFORM_METAL_EXT
+    // No native window (offscreen fallback: the contract smoke passes a fake
+    // non-CAMetalLayer pointer, which SetNativeLayer rejected) means there is
+    // nothing to present to -- this swap is a successful no-op, matching the
+    // offscreen lavapipe contract. Only a live layer that fails to build a
+    // swapchain is a genuine present failure.
+    if (!g.native_layer) return true;
+    if (!EnsureSwapchain()) return false;
+
+    RetireAllInflight();
 
     // Acquire the next image. The acquire is signalled via a fence rather
     // than a semaphore so the same sync object can be safely waited + reset

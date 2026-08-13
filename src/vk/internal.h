@@ -497,8 +497,42 @@ struct Engine {
     uint64_t stats_draws_vk = 0;      // DrawOps accepted onto a frame slot
     uint64_t stats_draws_skipped = 0; // Draw() early-outs (empty vertex stream)
     uint64_t stats_pipe_fail = 0;     // CreateGraphicsPipelines failures
+    uint64_t stats_pipe_miss = 0;     // pipeline cache misses (rebuilds)
     uint64_t stats_ubo_wrap = 0;      // dynamic UBO pool exhaustion flushes
     uint32_t last_frame_ops = 0;      // ops recorded in the last submitted batch
+    uint64_t last_pipe_miss = 0;      // stats_pipe_miss at the last submit (delta)
+
+    // M8 device-black-screen probe: with MITHRIL_SELFTEST_FRAME=1 the engine
+    // renders one fullscreen red quad through the real GL->draw path
+    // immediately at boot (before the app draws anything). A visible red
+    // frame proves the render/present chain works and isolates the fault to
+    // app-side content (shaders/UBO/textures); a black screen with this on
+    // points at the engine's GPU execution itself.
+    bool selftest_done = false;
+
+    // One-shot per-frame introspection of the last submitted batch (captured
+    // in SubmitFlush, dumped by Present()'s diag). Values are raw and
+    // uninterpreted: ubo8 is the first 8 composed UBO bytes of the op (LE),
+    // vp/sc the GL viewport/scissor rects at submit time.
+    struct DiagOp {
+        uint64_t program = 0;
+        uint32_t ubo_offset = 0, ubo_range = 0;
+        uint64_t ubo8 = 0;
+        uint32_t vertex_count = 0, index_count = 0, instance_count = 0;
+        uint32_t topology = 0;
+        uint32_t tex_count = 0, tex0_has_view = 0;
+        int32_t vp[4] = {0, 0, 0, 0}, sc[4] = {0, 0, 0, 0};
+    };
+    struct DiagFrame {
+        DiagOp ops[4];
+        uint32_t nops = 0;
+        bool clear_applied = false;
+        float clear[4] = {0, 0, 0, 0};
+        uint32_t clear_mask = 0;
+        uint64_t pipe_miss_delta = 0;
+        uint32_t frame_ops = 0;
+    };
+    DiagFrame last_diag;
 };
 
 // Engine + program/pipeline caches (storage lives in engine.cpp).

@@ -179,6 +179,7 @@ VkSampleCountFlagBits ToVkSampleCount(uint32_t samples) {
 VkPipeline GetOrCreatePipeline(const Program& prog, const DrawOp& op) {
     auto it = g_pipelines.find(op.pipeline_key);
     if (it != g_pipelines.end()) return it->second;
+    ++g.stats_pipe_miss;
 
     // Binding 0: per-vertex stream; binding 1: per-instance stream.
     std::vector<VkVertexInputBindingDescription> vb;
@@ -423,14 +424,28 @@ uint64_t CreateProgram(const std::vector<uint32_t>& vs,
                       [](const UboMember& a, const UboMember& b) {
                           return a.offset < b.offset;
                       });
+            // Cross-stage relocation can place one uniform name at two
+            // offsets (the fragment copy behind the vertex copy -- the
+            // composition writes the value at every placement); drop only
+            // exact duplicates.
             auto dup = std::unique(p.members.begin(), p.members.end(),
                                    [](const UboMember& a, const UboMember& b) {
-                                       return a.name == b.name;
+                                       return a.name == b.name &&
+                                              a.offset == b.offset &&
+                                              a.size == b.size;
                                    });
             p.members.erase(dup, p.members.end());
+            VkDeviceSize end = 0;
+            for (const auto& m : p.members)
+                end = std::max<VkDeviceSize>(end, m.offset + m.size);
+            p.ubo_size = std::max<VkDeviceSize>(p.ubo_size, end);
             ML_LOG_DEBUG("vk: program %llu UBO %zu bytes (%zu members)",
                          (unsigned long long)h, (size_t)p.ubo_size,
                          p.members.size());
+            for (const auto& m : p.members)
+                ML_LOG_DEBUG("  member %s off=%llu size=%llu", m.name.c_str(),
+                             (unsigned long long)m.offset,
+                             (unsigned long long)m.size);
         }
     } catch (const std::exception& e) {
         ML_LOG_WARN("vk: UBO reflection failed: %s", e.what());

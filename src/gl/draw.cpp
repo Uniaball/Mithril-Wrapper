@@ -7,8 +7,11 @@
 #include "internal.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <utility>
+
+#include <util/log.h>
 
 namespace {
 namespace sh = mithril::shader;
@@ -426,6 +429,8 @@ void DrawCommon(GLenum mode, const std::vector<uint32_t>& idx, GLint first,
         }
         dp.sampler_binds.push_back({smp.binding, smp_id, tex});
     }
+    ML_LOG_DEBUG("gl: draw samplers=%zu tex_unit0=%u", prog->samplers.size(),
+                 g_texture_units[0]);
     if (!dp.vertex_stream.data.empty()) v::Draw(dp);
 }
 
@@ -501,6 +506,60 @@ uint64_t g_gl_fetch_fail = 0;
 // External-linkage accessors for the vk-layer diag (declared in internal.h).
 uint64_t GetGlDrawCalls() { return g_gl_draw_calls; }
 uint64_t GetGlFetchFail() { return g_gl_fetch_fail; }
+
+// M8 device black-screen probe (called by vk::Present on the very first swap,
+// env-gated by MITHRIL_SELFTEST_FRAME=1): record one fullscreen red-quad
+// draw through the real GL entry points -- shader program, UBO compose,
+// vertex fetch, pipeline, submit -- and flush it immediately, so the next
+// present blits red before the app draws anything. A red first frame on a
+// device that otherwise renders black pins the fault to app-side content
+// (shaders/UBO/textures); persistent black pins it to the engine's GPU
+// execution itself. One-shot, and inert without the env var.
+void RunGLSelfTestOnce() {
+    static bool s_armed = getenv("MITHRIL_SELFTEST_FRAME") != nullptr;
+    static bool s_done = false;
+    if (!s_armed || s_done) return;
+    s_done = true;
+    if (!v::EnsureInit()) return;
+
+    const char* vs_src = "#version 330 core\n"
+                         "in vec2 pos;\n"
+                         "void main() { gl_Position = vec4(pos, 0.0, 1.0); }\n";
+    const char* fs_src = "#version 330 core\n"
+                         "uniform vec4 tint;\n"
+                         "out vec4 frag;\n"
+                         "void main() { frag = tint; }\n";
+
+    GLuint vs = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vs, 1, &vs_src, nullptr);
+    glCompileShader(vs);
+    GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fs, 1, &fs_src, nullptr);
+    glCompileShader(fs);
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glLinkProgram(prog);
+    glUseProgram(prog);
+    GLint tint = glGetUniformLocation(prog, "tint");
+    glUniform4f(tint, 1.0f, 0.0f, 0.0f, 1.0f);  // solid red
+
+    static const float verts[] = {-1.f, -1.f, 1.f, -1.f, 1.f, 1.f,
+                                  -1.f, -1.f, 1.f, 1.f,  -1.f, 1.f};
+    GLuint vao = 0, vbo = 0;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, (void*)0);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    // Kick the frame to the GPU; the caller's present then blits it out.
+    v::SubmitFlush(true);
+    ML_LOG_INFO("vk: selftest red frame recorded and submitted");
+}
 
 extern "C" {
 

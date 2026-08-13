@@ -190,6 +190,75 @@ void APIENTRY glLinkProgram(GLuint program) {
 
     p->linked = true;
     sh::ReflectProgram(*p);
+
+    // M8 cross-stage UBO collision fix. Each stage's synthetic
+    // mithril_GlobalBlock independently starts its members at offset 0, so
+    // an MC-style program (mat4 ModelViewMat/ProjMat in the VS, vec4
+    // ColorModulator in the FS) merges into overlapping member offsets and
+    // the composed UBO silently corrupts (ColorModulator overwrites the
+    // ModelViewMat columns -> degenerate geometry, black screen, no error).
+    // When the fragment stage's members collide with the vertex stage's,
+    // relocate the whole fragment block behind the vertex block and
+    // recompile the fragment stage with explicit layout(offset=...) so both
+    // stages read one consistent UBO.
+    for (auto& ubo : sh::ReflectStageUbos(p->vertex_spirv, p->fragment_spirv)) {
+        ML_LOG_DEBUG("glLinkProgram(%u): block %s binding=%u vs=%d fs=%d",
+                     program, ubo.name.c_str(), ubo.binding, ubo.vs, ubo.fs);
+        if (ubo.name != "mithril_GlobalBlock") continue;  // loose uniforms only
+        bool conflict = false;
+        uint32_t vs_end = 0;
+        for (auto& m : ubo.members)
+            if (m.in_vs && m.size && m.vs_offset + m.size > vs_end)
+                vs_end = m.vs_offset + m.size;
+        for (auto& m : ubo.members) {
+            if (!m.in_vs || !m.size) continue;
+            for (auto& f : ubo.members) {
+                if (!f.in_fs || !f.size) continue;
+                if (f.fs_offset == m.vs_offset && f.size == m.size) continue;
+                if (f.fs_offset < m.vs_offset + m.size &&
+                    m.vs_offset < f.fs_offset + f.size) {
+                    conflict = true;
+                    break;
+                }
+            }
+            if (conflict) break;
+        }
+        if (!conflict) continue;
+
+        uint32_t base = (vs_end + 15u) & ~15u;  // std140 vec4/mat4 alignment
+        std::unordered_map<std::string, uint32_t> forced;
+        for (auto& m : ubo.members)
+            if (m.in_fs) forced[m.name] = base + m.fs_offset;
+
+        GLuint fs_id = 0;
+        for (GLuint sid : p->attached) {
+            auto* s = sh::GetShader(sid);
+            if (s && s->type == GL_FRAGMENT_SHADER) { fs_id = sid; break; }
+        }
+        std::vector<uint32_t> patched;
+        std::string info;
+        if (fs_id && sh::CompileStage(GL_FRAGMENT_SHADER,
+                                      sh::GetShader(fs_id)->source, patched,
+                                      info, &forced) &&
+            !patched.empty()) {
+            p->fragment_spirv = std::move(patched);
+            for (auto& pu : sh::ReflectStageUbos(p->vertex_spirv,
+                                                 p->fragment_spirv))
+                ML_LOG_DEBUG("glLinkProgram(%u): post-patch block %s binding=%u",
+                             program, pu.name.c_str(), pu.binding);
+            sh::ReflectProgram(*p);
+            ML_LOG_DEBUG("glLinkProgram(%u): post-patch samplers=%zu uniforms=%zu",
+                         program, p->samplers.size(), p->uniforms.size());
+            ML_LOG_INFO("glLinkProgram(%u): FS UBO relocated behind VS block "
+                        "(base %u, %zu members)",
+                        program, base, forced.size());
+        } else {
+            ML_LOG_WARN("glLinkProgram(%u): FS UBO relocation recompile failed: %s",
+                        program, info.c_str());
+        }
+        break;
+    }
+
     ML_LOG_DEBUG("glLinkProgram(%u): VS=%zu FS=%zu words, %zu uniforms",
                  program, p->vertex_spirv.size(), p->fragment_spirv.size(),
                  p->uniforms.size());

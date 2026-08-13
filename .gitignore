@@ -29,3 +29,4 @@ tests/render3d/
 .trae/
 latestlog.txt
 tests/multiubo_smoke
+tests/mcshape_smoke
