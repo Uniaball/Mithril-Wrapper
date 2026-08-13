@@ -378,10 +378,14 @@ jobs:
           # The extracted framework binary is named `MoltenVK`; libmithril dlopens
           # @loader_path/libMoltenVK.dylib next to itself, so rename on deploy.
           cp "${{ steps.mvk.outputs.path }}" "$DATA/tmp/mr/output/libMoltenVK.dylib"
+          # Simulator launchd refuses to spawn unsigned/inexecutable programs;
+          # make the smoke binary explicitly executable + ad-hoc signed.
+          chmod +x tests/mcshape_smoke_sim
+          codesign -f -s - tests/mcshape_smoke_sim || true
           cp tests/mcshape_smoke_sim "$DATA/tmp/mr/"
-          # mcshape dlopens ./output/libmithril.dylib (relative to CWD); libmithril
-          # then dlopens @loader_path/libMoltenVK.dylib, so MoltenVK must sit next
-          # to libmithril under output/.
+          chmod +x "$DATA/tmp/mr/mcshape_smoke_sim"
+          # sanity: can the sim see the deployed tree? (diagnostic only)
+          xcrun simctl spawn "$UDID" /usr/bin/ls -la /tmp/mr || true
           # Run the binary directly (no /bin/sh wrapper: the macOS dyld cannot
           # load iOS-simulator binaries, so simctl spawn /bin/sh aborts).
           # SIMCTL_CHILD_* forwards env into the spawned process; the test reads
