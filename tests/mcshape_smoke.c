@@ -37,6 +37,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef __APPLE__
+#include <objc/message.h>
+#include <objc/runtime.h>
+#endif
+
 #define GL_VERTEX_SHADER     0x8B31
 #define GL_FRAGMENT_SHADER   0x8B30
 #define GL_TRIANGLES         0x0004
@@ -175,6 +180,26 @@ static void Quad(Vtx* q, float x0, float y0, float x1, float y1,
     q[4] = (Vtx){x1, y1, 0, 1, 1, r, g, b, a};
     q[5] = (Vtx){x0, y1, 0, 0, 1, r, g, b, a};
 }
+
+#ifdef __APPLE__
+// Create a real CAMetalLayer via the objc runtime so the Apple build drives
+// the full VK_EXT_metal_surface + swapchain path under the MoltenVK ICD.
+// Without it, eglCreateWindowSurface(0x1) dereferences a bogus layer pointer
+// in SetNativeLayer()/IsCametalLayer() and the test segfaults on Metal
+// (lavapipe has no Metal branch, so a fake 0x1 window is safe there).
+struct DrawableSize { double width, height; };
+static void* MakeMetalLayer(void) {
+    Class layerClass = objc_getClass("CAMetalLayer");
+    if (!layerClass) return (void*)0x1;
+    typedef id (*NewFn)(id, SEL);
+    NewFn alloc = (NewFn)&objc_msgSend;
+    id layer = alloc((id)layerClass, sel_registerName("new"));
+    typedef void (*SetDrawableFn)(id, SEL, struct DrawableSize);
+    ((SetDrawableFn)&objc_msgSend)(layer, sel_registerName("setDrawableSize:"),
+                                   (struct DrawableSize){512, 512});
+    return layer;
+}
+#endif
 
 int main(void) {
 #if defined(__APPLE__)
@@ -330,7 +355,12 @@ int main(void) {
                                EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE};
         void* configs[1]; int ncfg = 0;
         eglChooseConfig(dpy, attribs, configs, 1, &ncfg);
-        void* surf = eglCreateWindowSurface(dpy, configs[0], (void*)0x1, 0);
+#ifdef __APPLE__
+        void* win = MakeMetalLayer();
+#else
+        void* win = (void*)0x1;
+#endif
+        void* surf = eglCreateWindowSurface(dpy, configs[0], win, 0);
         const int ctx_attrs[] = {0x3098, 2, EGL_NONE};
         void* ctx = eglCreateContext(dpy, configs[0], 0, ctx_attrs);
         eglMakeCurrent(dpy, surf, surf, ctx);

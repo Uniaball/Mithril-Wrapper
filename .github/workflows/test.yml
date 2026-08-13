@@ -319,29 +319,33 @@ jobs:
         env:
           CCACHE_DIR: ~/.cache/ccache
 
-      - name: Cache MoltenVK (iOS Simulator build)
+      - name: Cache MoltenVK (iOS Simulator dylib)
         id: cache-mvk
         uses: actions/cache@v4
         with:
-          path: MoltenVK/Package
-          key: moltenvk-iossim-${{ runner.os }}-v1
+          path: MoltenVK-sim
+          key: moltenvk-iossim-${{ runner.os }}-v1.4.2
 
-      - name: Build MoltenVK (iOS Simulator)
+      - name: Download prebuilt MoltenVK (iOS Simulator dylib)
         if: steps.cache-mvk.outputs.cache-hit != 'true'
         run: |
-          git clone --depth 1 https://github.com/KhronosGroup/MoltenVK.git
-          cd MoltenVK
-          ./fetchDependencies --iossim
-          make iossim
-          find Package -name "libMoltenVK.dylib"
+          # The official release ships the iOS Simulator slice only as a static
+          # .a inside an XCFramework, but its dynamic xcframework also carries a
+          # MoltenVK.framework whose binary IS a runnable dylib for the
+          # simulator. Extract that one binary (it is what libmithril dlopens as
+          # @loader_path/libMoltenVK.dylib at runtime).
+          gh release download -R KhronosGroup/MoltenVK --pattern "MoltenVK-all.tar" --dir /tmp
+          mkdir -p MoltenVK-sim
+          tar -C MoltenVK-sim -xzf /tmp/MoltenVK-all.tar \
+            MoltenVK/MoltenVK/dynamic/MoltenVK.xcframework/ios-arm64_x86_64-simulator/MoltenVK.framework/MoltenVK
 
       - name: Locate MoltenVK dylib
         id: mvk
         run: |
-          MVK=$(find MoltenVK/Package -name "libMoltenVK.dylib" | head -1)
-          [ -n "$MVK" ] || { echo "libMoltenVK.dylib not found in MoltenVK/Package"; exit 1; }
-          echo "path=$MVK" >> "$GITHUB_OUTPUT"
+          MVK=$(find MoltenVK-sim -type f -name "MoltenVK" | head -1)
+          [ -n "$MVK" ] || { echo "MoltenVK simulator dylib not found"; exit 1; }
           file "$MVK"
+          echo "path=$MVK" >> "$GITHUB_OUTPUT"
 
       - name: Ensure iOS Simulator runtime
         run: |
@@ -369,7 +373,9 @@ jobs:
           DATA="$HOME/Library/Developer/CoreSimulator/Devices/$UDID/data"
           mkdir -p "$DATA/tmp/mr/output"
           cp output/libmithril.dylib "$DATA/tmp/mr/output/"
-          cp "${{ steps.mvk.outputs.path }}" "$DATA/tmp/mr/output/"
+          # The extracted framework binary is named `MoltenVK`; libmithril dlopens
+          # @loader_path/libMoltenVK.dylib next to itself, so rename on deploy.
+          cp "${{ steps.mvk.outputs.path }}" "$DATA/tmp/mr/output/libMoltenVK.dylib"
           cp tests/mcshape_smoke_sim "$DATA/tmp/mr/"
           # mcshape dlopens ./output/libmithril.dylib (relative to CWD); libmithril
           # then dlopens @loader_path/libMoltenVK.dylib, so MoltenVK must sit next
