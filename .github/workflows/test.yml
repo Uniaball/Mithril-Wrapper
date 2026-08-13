@@ -384,8 +384,13 @@ jobs:
           codesign -f -s - tests/mcshape_smoke_sim || true
           cp tests/mcshape_smoke_sim "$DATA/tmp/mr/"
           chmod +x "$DATA/tmp/mr/mcshape_smoke_sim"
-          # sanity: can the sim see the deployed tree? (diagnostic only)
-          xcrun simctl spawn "$UDID" /usr/bin/ls -la /tmp/mr || true
+          # --- diagnostics (host side) ---
+          echo "== host view of deployed tree =="
+          ls -la "$DATA/tmp/mr/" "$DATA/tmp/mr/output/"
+          echo "== simctl device state =="
+          xcrun simctl list devices | grep -i booted || true
+          echo "== sim spawn sanity (launchctl exists in every sim) =="
+          xcrun simctl spawn "$UDID" /bin/launchctl print system 2>&1 | head -5 || true
           # Run the binary directly (no /bin/sh wrapper: the macOS dyld cannot
           # load iOS-simulator binaries, so simctl spawn /bin/sh aborts).
           # SIMCTL_CHILD_* forwards env into the spawned process; the test reads
