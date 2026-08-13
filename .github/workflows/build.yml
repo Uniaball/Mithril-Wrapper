@@ -248,6 +248,9 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "RENDER SMOKE"
 
+      - name: Install ffmpeg (macOS)
+        run: brew install ffmpeg
+
       - name: Convert 3D animation to MP4 + preview PNG (MoltenVK)
         run: |
           ffmpeg -y -framerate 30 -i tests/render3d/frame_%04d.ppm \
