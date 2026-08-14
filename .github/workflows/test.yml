@@ -519,22 +519,28 @@ jobs:
           cp output/libmithril.dylib output/libmithril.sim.dylib
           file output/libmithril.sim.dylib
 
-      - name: Build launcher .app for iOS Simulator
+      - name: Install launcher build deps (gmake, JDK8, ldid)
         run: |
+          brew install make
+          brew install --cask temurin@8 || true
+          brew install ldid || true
+
+      - name: Build launcher .app via gmake (matches launcher development.yml)
+        run: |
+          # The launcher's Xcode project is a PBXLegacyTarget wrapping its
+          # Makefile (no real Xcode scheme), so mirror the launcher's own CI
+          # (development.yml): gmake dsym package PLATFORM=2 -> .app in
+          # artifacts/Payload/AngelAuraAmethyst.app.
           cd launcher-src
-          # Device-only Makefile cannot target the simulator, so drive the Xcode
-          # project directly against the iphonesimulator SDK (best-effort e2e).
-          xcodebuild -project Amethyst.xcodeproj \
-            -scheme AngelAuraAmethyst -sdk iphonesimulator \
-            -configuration Release -arch arm64 \
-            -derivedDataPath /tmp/launcher-dd build \
-            CODE_SIGNING_ALLOWED=NO
+          export PATH="/opt/homebrew/bin:$PATH"
+          export SLIMMED=0
+          gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=2
 
       - name: Locate launcher .app
         id: app
         run: |
-          APP=$(find /tmp/launcher-dd -name "*.app" -type d | head -1)
-          [ -n "$APP" ] || { echo "no launcher .app produced"; exit 1; }
+          APP="$(pwd)/launcher-src/artifacts/Payload/AngelAuraAmethyst.app"
+          [ -d "$APP" ] || { echo "no launcher .app produced at $APP"; exit 1; }
           echo "path=$APP" >> "$GITHUB_OUTPUT"
           ls -la "$APP"
 
@@ -582,8 +588,10 @@ jobs:
           kill -INT "$REC_PID" 2>/dev/null || true
           wait "$REC_PID" 2>/dev/null || true
           cat /tmp/launch.txt
-          # Collect the launcher log for the artifact upload below.
-          cp "$HOME/Library/Developer/CoreSimulator/Devices/$UDID/data/Containers/Data/Application"/*/Documents/latestlog.txt /tmp/latestlog.txt 2>/dev/null || true
+          # Collect the game log. The launcher redirects STDIO to
+          # $POJAV_HOME/latestlog.txt ($HOME/Documents/AngelAuraAmethyst/), so
+          # find it anywhere under the app's simulator data container.
+          find "$HOME/Library/Developer/CoreSimulator/Devices/$UDID/data/Containers/Data/Application" -name latestlog.txt 2>/dev/null | head -1 | xargs -I{} cp {} /tmp/latestlog.txt 2>/dev/null || true
           cp /tmp/e2e.mp4 /tmp/e2e-recording.mp4 2>/dev/null || true
           ls -la /tmp/latestlog.txt /tmp/e2e-recording.mp4 2>/dev/null || true
         env:
