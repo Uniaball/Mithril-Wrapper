@@ -38,6 +38,19 @@ bool SetTargetSize(uint32_t w, uint32_t h) {
     g.depth_mem = VK_NULL_HANDLE;
     g.width = w;
     g.height = h;
+    // GL default viewport/scissor track the window size; they are only
+    // overwritten by explicit glViewport/glScissor calls. The defaults were
+    // 512x512 (the initial offscreen size), so after the first real-surface
+    // resize every scissored draw (MC uses the default box without calling
+    // glScissor) got clipped to a 512x512 corner and the screen stayed black.
+    g.vp_x = 0;
+    g.vp_y = 0;
+    g.vp_w = (float)w;
+    g.vp_h = (float)h;
+    g.sc_x = 0;
+    g.sc_y = 0;
+    g.sc_w = (float)w;
+    g.sc_h = (float)h;
     if (!CreateTarget()) return false;
 
     // The fresh images were created in UNDEFINED and never transitioned. The
