@@ -513,6 +513,10 @@ jobs:
         run: |
           PATCH=$(find launcher-patch -name '*.patch' | head -1)
           [ -n "$PATCH" ] || { echo "no launcher patch found"; exit 1; }
+          # The launcher-src cache may already hold a previously applied patch
+          # (cached build dir), which makes re-applying conflict. Reset tracked
+          # files to HEAD first so the patch applies cleanly.
+          git -C launcher-src checkout -- . 2>/dev/null || true
           echo "applying $PATCH"
           git -C launcher-src apply --check "$PWD/$PATCH"
           git -C launcher-src apply "$PWD/$PATCH"
