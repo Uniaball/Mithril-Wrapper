@@ -395,10 +395,20 @@ jobs:
           REC_PID=$!
           sleep 1
           SIMCTL_CHILD_MITHRIL_LIB_PATH=/tmp/mr/output/libmithril.dylib \
+          SIMCTL_CHILD_MITHRIL_DUMP_PPM=/tmp/mr/frame.ppm \
           SIMCTL_CHILD_MVK_CONFIG_LOG_LEVEL=3 \
           SIMCTL_CHILD_MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 \
             xcrun simctl spawn "$UDID" /tmp/mr/mcshape_smoke_sim \
             > mcshape_sim.txt 2>&1 || true
+          # The test renders offscreen, so the screen would otherwise stay on
+          # the home screen. Put the dumped frame into the simulator Photos app
+          # and open it so the recording actually shows the rendered result.
+          if [ -f /tmp/mr/frame.ppm ]; then
+            sips -s format png /tmp/mr/frame.ppm --out /tmp/mr/frame.png >/dev/null
+            xcrun simctl addmedia "$UDID" /tmp/mr/frame.png
+            xcrun simctl openurl "$UDID" photos-redirect:// || true
+            sleep 3
+          fi
           sleep 1
           kill -INT "$REC_PID" 2>/dev/null || true
           wait "$REC_PID" 2>/dev/null || true

@@ -373,6 +373,30 @@ int main(void) {
     }
     finish();
 
+    /* Optional full-frame dump (env-gated): CI shows the rendered frame on
+     * the simulator screen (added to Photos) so the screen recording has
+     * content; a headless offscreen render would otherwise leave the
+     * simulator on the home screen. */
+    if (getenv("MITHRIL_DUMP_PPM")) {
+        const char* out = getenv("MITHRIL_DUMP_PPM");
+        unsigned char* frame = (unsigned char*)malloc((size_t)W * H * 4);
+        readPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, frame);
+        FILE* f = fopen(out, "wb");
+        if (f) {
+            fprintf(f, "P6\n%d %d\n255\n", W, H);
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    const unsigned char* p = frame + ((size_t)y * W + x) * 4;
+                    fputc(p[0], f); fputc(p[1], f); fputc(p[2], f);
+                }
+            fclose(f);
+            printf("ok  : dumped frame to %s\n", out);
+        } else {
+            printf("fail: cannot open %s for frame dump\n", out);
+        }
+        free(frame);
+    }
+
     unsigned char px[4];
 
     /* gui (128, 256) -> uv (0.25, 0.5) */
