@@ -499,10 +499,15 @@ jobs:
           key: launcher-${{ env.LAUNCHER_REV }}-${{ runner.os }}
       - name: Fetch launcher source
         if: steps.launcher-cache.outputs.cache-hit != 'true'
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
         run: |
           git clone --depth 1 \
             "https://github.com/${{ env.LAUNCHER_REPO }}.git" launcher-src
           git -C launcher-src checkout "${{ env.LAUNCHER_REV }}" 2>/dev/null || true
+          # Natives build needs the external submodules (AFNetworking, fishhook,
+          # DBNumberedSlider, ZeroTierFramework), mirroring the launcher's CI.
+          git -C launcher-src submodule update --init --recursive
 
       - name: Apply launcher patch
         run: |
