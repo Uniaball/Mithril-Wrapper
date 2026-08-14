@@ -16,6 +16,7 @@
 | --- | --- |
 | `air-with-mithril-cli-f8035a1.patch` | 为启动器添加 CLI / 环境变量自动化入口 |
 | `air-with-mithril-skip-mobileglues-f8035a1.patch` | 跳过 MobileGlues 构建（不参与 mithril 测试，其预编译库为 iOS 设备切片，导致 simulator 构建失败） |
+| `air-with-mithril-simulator-target-f8035a1.patch` | native 编译加 `-target arm64-apple-ios14.0-simulator`（C/CXX），统一为 simulator 平台，避免"built for iOS vs iOS-simulator"链接冲突 |
 
 ## 如何复现
 
