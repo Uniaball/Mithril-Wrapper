@@ -534,18 +534,18 @@ jobs:
           brew install --cask temurin@8 || true
           brew install ldid || true
 
-      - name: Build launcher .app via gmake (simulator-SDK attempt)
+      - name: Build launcher .app via gmake (matches launcher development.yml)
         run: |
-          # A device-built (iphoneos) .app cannot launch in the iOS simulator
-          # (LC_BUILD_VERSION platform mismatch -> SBMainWorkspace denial). Try
-          # overriding the Makefile's SDKPATH to the simulator SDK so the native
-          # binary is simulator-platform. Remaining gap: the launcher ships only
-          # device JREs, so Java may still fail to start MC.
+          # Mirror the launcher's own CI (development.yml): gmake dsym package
+          # PLATFORM=2 -> .app in artifacts/Payload/AngelAuraAmethyst.app.
+          # NOTE: a simulator-SDK override fails at MobileGlues (its prebuilt
+          # libglslang.a is iOS-device only), and a device-build .app cannot be
+          # launched by the iOS simulator (platform mismatch). So this job
+          # verifies build + mithril-dylib swap + artifacts; launching MC in the
+          # simulator remains blocked for the launcher as-is.
           cd launcher-src
           export PATH="/opt/homebrew/bin:$PATH"
           export SLIMMED=0
-          export SDKPATH="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-          echo "SDKPATH=$SDKPATH"
           gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=2
 
       - name: Locate launcher .app
