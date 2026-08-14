@@ -530,15 +530,18 @@ jobs:
           brew install --cask temurin@8 || true
           brew install ldid || true
 
-      - name: Build launcher .app via gmake (matches launcher development.yml)
+      - name: Build launcher .app via gmake (simulator-SDK attempt)
         run: |
-          # The launcher's Xcode project is a PBXLegacyTarget wrapping its
-          # Makefile (no real Xcode scheme), so mirror the launcher's own CI
-          # (development.yml): gmake dsym package PLATFORM=2 -> .app in
-          # artifacts/Payload/AngelAuraAmethyst.app.
+          # A device-built (iphoneos) .app cannot launch in the iOS simulator
+          # (LC_BUILD_VERSION platform mismatch -> SBMainWorkspace denial). Try
+          # overriding the Makefile's SDKPATH to the simulator SDK so the native
+          # binary is simulator-platform. Remaining gap: the launcher ships only
+          # device JREs, so Java may still fail to start MC.
           cd launcher-src
           export PATH="/opt/homebrew/bin:$PATH"
           export SLIMMED=0
+          export SDKPATH="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          echo "SDKPATH=$SDKPATH"
           gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=2
 
       - name: Locate launcher .app
@@ -599,6 +602,8 @@ jobs:
           find "$HOME/Library/Developer/CoreSimulator/Devices/$UDID/data/Containers/Data/Application" -name latestlog.txt 2>/dev/null | head -1 | xargs -I{} cp {} /tmp/latestlog.txt 2>/dev/null || true
           cp /tmp/e2e.mp4 /tmp/e2e-recording.mp4 2>/dev/null || true
           ls -la /tmp/latestlog.txt /tmp/e2e-recording.mp4 2>/dev/null || true
+          # surface simulator crash reports so the launch failure is diagnosable
+          ls -t "$HOME/Library/Logs/DiagnosticReports/"* 2>/dev/null | head -5 || true
         env:
           AIR_VERSION: ${{ vars.AIR_VERSION }}
 
