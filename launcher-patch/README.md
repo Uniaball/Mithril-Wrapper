@@ -15,6 +15,7 @@
 | 文件 | 说明 |
 | --- | --- |
 | `air-with-mithril-cli-f8035a1.patch` | 为启动器添加 CLI / 环境变量自动化入口 |
+| `air-with-mithril-skip-mobileglues-f8035a1.patch` | 跳过 MobileGlues 构建（不参与 mithril 测试，其预编译库为 iOS 设备切片，导致 simulator 构建失败） |
 
 ## 如何复现
 
@@ -24,7 +25,9 @@ cd Air_with-mithril
 git apply ../air-with-mithril-cli-f8035a1.patch
 ```
 
-补丁只新增、不删除，`git apply --check` 应无冲突。
+补丁只新增、不删除，`git apply --check` 应无冲突。`skip-mobileglues` 补丁把启动器 Makefile 的
+`dep_mg` 目标替换为空实现（跳过 MobileGlues 编译），因为 CI 只测 mithril 渲染器，MobileGlues
+不参与，且其预编译 `libglslang.a` 是 iOS 设备切片、会让 simulator 构建链接失败。
 
 ## 补丁做了什么
 

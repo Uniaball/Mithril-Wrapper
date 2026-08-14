@@ -509,17 +509,17 @@ jobs:
           # DBNumberedSlider, ZeroTierFramework), mirroring the launcher's CI.
           git -C launcher-src submodule update --init --recursive
 
-      - name: Apply launcher patch
+      - name: Apply launcher patches
         run: |
-          PATCH=$(find launcher-patch -name '*.patch' | head -1)
-          [ -n "$PATCH" ] || { echo "no launcher patch found"; exit 1; }
-          # The launcher-src cache may already hold a previously applied patch
+          # The launcher-src cache may already hold previously applied patches
           # (cached build dir), which makes re-applying conflict. Reset tracked
-          # files to HEAD first so the patch applies cleanly.
+          # files to HEAD first so the patches apply cleanly.
           git -C launcher-src checkout -- . 2>/dev/null || true
-          echo "applying $PATCH"
-          git -C launcher-src apply --check "$PWD/$PATCH"
-          git -C launcher-src apply "$PWD/$PATCH"
+          for PATCH in $(find launcher-patch -name '*.patch' | sort); do
+            echo "applying $PATCH"
+            git -C launcher-src apply --check "$PWD/$PATCH"
+            git -C launcher-src apply "$PWD/$PATCH"
+          done
 
       - name: Replace launcher mithril dylib with freshly built one
         run: |
@@ -534,18 +534,20 @@ jobs:
           brew install --cask temurin@8 || true
           brew install ldid || true
 
-      - name: Build launcher .app via gmake (matches launcher development.yml)
+      - name: Build launcher .app via gmake (simulator SDK)
         run: |
-          # Mirror the launcher's own CI (development.yml): gmake dsym package
-          # PLATFORM=2 -> .app in artifacts/Payload/AngelAuraAmethyst.app.
-          # NOTE: a simulator-SDK override fails at MobileGlues (its prebuilt
-          # libglslang.a is iOS-device only), and a device-build .app cannot be
-          # launched by the iOS simulator (platform mismatch). So this job
-          # verifies build + mithril-dylib swap + artifacts; launching MC in the
-          # simulator remains blocked for the launcher as-is.
+          # A device-built (iphoneos) .app cannot launch in the iOS simulator
+          # (LC_BUILD_VERSION platform mismatch -> SBMainWorkspace denial). Override
+          # the Makefile SDKPATH to the iphonesimulator SDK so the native binary is
+          # simulator-platform. MobileGlues is skipped via launcher-patch so its
+          # device-only prebuilt libglslang.a no longer breaks the simulator build.
+          # Remaining gap: the launcher ships only device JREs, so Java/MC may
+          # still fail to start in the simulator.
           cd launcher-src
           export PATH="/opt/homebrew/bin:$PATH"
           export SLIMMED=0
+          export SDKPATH="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          echo "SDKPATH=$SDKPATH"
           gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=2
 
       - name: Locate launcher .app
