@@ -561,6 +561,7 @@ void RunGLSelfTestOnce() {
 
     // Kick the frame to the GPU; the caller's present then blits it out.
     v::SubmitFlush(true);
+    v::MarkSelfTestDone();  // diag reports this; the local s_done is a guard
     ML_LOG_INFO("vk: selftest red frame recorded and submitted");
 }
 

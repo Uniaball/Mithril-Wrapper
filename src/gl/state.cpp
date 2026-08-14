@@ -41,6 +41,20 @@ static void SetCap(GLenum cap, bool on) {
 
 // --- capabilities -----------------------------------------------------------
 
+// M8 device diag: count clear events (total + color clears) so the periodic
+// target diag can tell whether a black target comes from the clear path or
+// the draw path. Defined OUTSIDE the extern "C" block below (C-linkage
+// declarations in internal.h are C++; see GetGlDrawCalls in draw.cpp).
+static uint64_t g_gl_clears = 0;
+static uint64_t g_gl_color_clears = 0;
+uint64_t GetGlClears() { return g_gl_clears; }
+uint64_t GetGlColorClears() { return g_gl_color_clears; }
+
+static void NoteClear(GLbitfield mask) {
+    ++g_gl_clears;
+    if (mask & GL_COLOR_BUFFER_BIT) ++g_gl_color_clears;
+}
+
 extern "C" {
 
 void APIENTRY glEnable(GLenum cap) {
@@ -120,6 +134,7 @@ void APIENTRY glClear(GLbitfield mask) {
     const GLbitfield valid = GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT;
     if (mask & ~valid) { PUSH_ERROR(GL_INVALID_VALUE); return; }
     if (!mask) return;
+    NoteClear(mask);
     v::EnsureInit();
     auto& st = s::GetState();
     v::SetClearColor(st.clear_color[0], st.clear_color[1], st.clear_color[2],
@@ -143,6 +158,7 @@ void APIENTRY glClearBufferfv(GLenum buffer, GLint drawbuffer, const GLfloat* va
     switch (buffer) {
         case GL_COLOR: {
             if (drawbuffer < 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            NoteClear(GL_COLOR_BUFFER_BIT);
             st.clear_color[0] = value[0]; st.clear_color[1] = value[1];
             st.clear_color[2] = value[2]; st.clear_color[3] = value[3];
             v::EnsureInit();
@@ -153,6 +169,7 @@ void APIENTRY glClearBufferfv(GLenum buffer, GLint drawbuffer, const GLfloat* va
         }
         case GL_DEPTH:
             if (drawbuffer != 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            NoteClear(GL_DEPTH_BUFFER_BIT);
             st.clear_depth = value[0];
             v::EnsureInit();
             v::SetClearDepth(value[0]);
@@ -161,6 +178,7 @@ void APIENTRY glClearBufferfv(GLenum buffer, GLint drawbuffer, const GLfloat* va
             return;
         case GL_STENCIL:
             if (drawbuffer != 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            NoteClear(GL_STENCIL_BUFFER_BIT);
             st.clear_stencil = (GLint)value[0];
             v::EnsureInit();
             v::SetClearStencil((GLint)value[0]);
@@ -178,6 +196,7 @@ void APIENTRY glClearBufferiv(GLenum buffer, GLint drawbuffer, const GLint* valu
     switch (buffer) {
         case GL_COLOR: {
             if (drawbuffer < 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            NoteClear(GL_COLOR_BUFFER_BIT);
             // Integer color formats: mirror the raw ints as RGBA8 floats.
             float f[4];
             for (int i = 0; i < 4; ++i) f[i] = (float)value[i];
@@ -191,6 +210,7 @@ void APIENTRY glClearBufferiv(GLenum buffer, GLint drawbuffer, const GLint* valu
         }
         case GL_STENCIL:
             if (drawbuffer != 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            NoteClear(GL_STENCIL_BUFFER_BIT);
             st.clear_stencil = value[0];
             v::EnsureInit();
             v::SetClearStencil(value[0]);
@@ -208,6 +228,7 @@ void APIENTRY glClearBufferuiv(GLenum buffer, GLint drawbuffer, const GLuint* va
     switch (buffer) {
         case GL_COLOR: {
             if (drawbuffer < 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+            NoteClear(GL_COLOR_BUFFER_BIT);
             float f[4];
             for (int i = 0; i < 4; ++i) f[i] = (float)value[i];
             st.clear_color[0] = f[0]; st.clear_color[1] = f[1];
@@ -227,6 +248,7 @@ void APIENTRY glClearBufferfi(GLenum buffer, GLint drawbuffer, GLfloat depth,
                               GLint stencil) {
     if (buffer != GL_DEPTH_STENCIL) { PUSH_ERROR(GL_INVALID_ENUM); return; }
     if (drawbuffer != 0) { PUSH_ERROR(GL_INVALID_VALUE); return; }
+    NoteClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     auto& st = s::GetState();
     st.clear_depth = depth;
     st.clear_stencil = stencil;

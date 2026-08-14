@@ -202,6 +202,12 @@ static void* MakeMetalLayer(void) {
 #endif
 
 int main(void) {
+    // The engine's first-present fullscreen red self-test probe (M8 black-
+    // screen bisect, ON by default) would otherwise occupy the exact first
+    // frame this smoke reads back, turning every sample red. Tests assert on
+    // the app's own frame, so force the probe off.
+    setenv("MITHRIL_SELFTEST_FRAME", "0", 1);
+
     // MITHRIL_LIB_PATH lets CI run the binary from an arbitrary CWD (e.g. a
     // booted iOS Simulator where ./output is not the working directory).
     const char* libpath = getenv("MITHRIL_LIB_PATH");

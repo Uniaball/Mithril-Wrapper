@@ -17,11 +17,14 @@
 #endif
 
 #include <chrono>
+#include <cstdlib>
 
 // M8 diagnostics: GL-layer draw counters (defined in gl/draw.cpp). Kept out
 // of the public header graph -- the diag only needs the two totals.
 uint64_t GetGlDrawCalls();
 uint64_t GetGlFetchFail();
+uint64_t GetGlClears();
+uint64_t GetGlColorClears();
 // M8 device-black-screen probe: renders one fullscreen red quad through the
 // real GL draw path (see gl/draw.cpp) on the very first Present() call.
 void RunGLSelfTestOnce();
@@ -323,6 +326,7 @@ bool Present() {
                     "vk: diag target %ux%u format=%u align=%llu frame_ops=%u "
                     "draws_vk=%llu skip=%llu pipe_fail=%llu miss=%llu "
                     "ubo_wrap=%llu gl_draws=%llu gl_fetch_fail=%llu "
+                    "clears=%llu color_clears=%llu "
                     "selftest=%d clear=%d(%.2f,%.2f,%.2f,%.2f,m=%u) | "
                     "center=%u,%u,%u,%u tl=%u,%u,%u,%u tr=%u,%u,%u,%u "
                     "bl=%u,%u,%u,%u br=%u,%u,%u,%u",
@@ -334,6 +338,8 @@ bool Present() {
                     (unsigned long long)g.stats_ubo_wrap,
                     (unsigned long long)GetGlDrawCalls(),
                     (unsigned long long)GetGlFetchFail(),
+                    (unsigned long long)GetGlClears(),
+                    (unsigned long long)GetGlColorClears(),
                     g.selftest_done ? 1 : 0,
                     g.last_diag.clear_applied ? 1 : 0, g.last_diag.clear[0],
                     g.last_diag.clear[1], g.last_diag.clear[2],
@@ -356,6 +362,51 @@ bool Present() {
             } else {
                 ML_LOG_INFO("vk: diag target center px unavailable (no readback)");
             }
+        }
+    }
+
+    // M8 device black-screen bisect: trace the first frames individually.
+    // Each line = one present cycle: cumulative GL clears (and how many
+    // cleared colour), the clear recorded for the last submitted batch, and
+    // the five readback samples. The readback reflects the last *submitted*
+    // frame, so the series shows exactly which frame turns the target black.
+    // Defaults to 20 frames; MITHRIL_TRACE_FRAMES overrides (0 disables).
+    {
+        static uint32_t s_traced = 0;
+        uint32_t limit = 20;
+        if (const char* e = getenv("MITHRIL_TRACE_FRAMES")) {
+            const int v = atoi(e);
+            if (v <= 0) limit = 0;
+            else limit = (uint32_t)v;
+        }
+        if (limit && s_traced < limit && g.readback_map && g.read_w &&
+            g.read_h) {
+            SubmitFlush(true);
+            RetireAllInflight();
+            auto px = [&](uint32_t x, uint32_t y) {
+                return g.readback_map + ((size_t)y * g.read_w + x) * 4;
+            };
+            const uint32_t w = g.read_w, h = g.read_h;
+            const uint8_t* c = px(w / 2, h / 2);
+            const uint8_t* tl = px(w / 8, h / 8);
+            const uint8_t* tr = px(w - w / 8 - 1, h / 8);
+            const uint8_t* bl = px(w / 8, h - h / 8 - 1);
+            const uint8_t* br = px(w - w / 8 - 1, h - h / 8 - 1);
+            ML_LOG_INFO(
+                "vk: trace frame %u draws=%llu clears=%llu color_clears=%llu "
+                "ops=%u clear=%d(%.2f,%.2f,%.2f,%.2f,m=%u) | "
+                "c=%u,%u,%u,%u tl=%u,%u,%u,%u tr=%u,%u,%u,%u "
+                "bl=%u,%u,%u,%u br=%u,%u,%u,%u",
+                s_traced, (unsigned long long)g.stats_draws_vk,
+                (unsigned long long)GetGlClears(),
+                (unsigned long long)GetGlColorClears(), g.last_frame_ops,
+                g.last_diag.clear_applied ? 1 : 0, g.last_diag.clear[0],
+                g.last_diag.clear[1], g.last_diag.clear[2],
+                g.last_diag.clear[3], g.last_diag.clear_mask,
+                c[0], c[1], c[2], c[3], tl[0], tl[1], tl[2], tl[3],
+                tr[0], tr[1], tr[2], tr[3], bl[0], bl[1], bl[2], bl[3],
+                br[0], br[1], br[2], br[3]);
+            ++s_traced;
         }
     }
 

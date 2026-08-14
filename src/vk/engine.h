@@ -264,6 +264,9 @@ void ReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, void* out);
 // eglCreateWindowSurface to the engine. Non-layers and non-Apple builds stay
 // offscreen. Lazy: the swapchain is created on the first Present().
 void SetNativeLayer(void* layer);
+// Record that the first-present self-test red frame was drawn; the periodic
+// diag reports this so a device black screen bisects at a glance.
+void MarkSelfTestDone();
 
 // vsync on/off (eglSwapInterval >0/==0) for the next swapchain / present mode.
 void SetVsync(bool enable);

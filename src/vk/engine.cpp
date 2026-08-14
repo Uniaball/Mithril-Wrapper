@@ -116,4 +116,8 @@ void SetScissor(float x, float y, float w, float h) {
     g.sc_w = w;
     g.sc_h = h;
 }
+
+void MarkSelfTestDone() {
+    g.selftest_done = true;
+}
 } // namespace mithril::vk

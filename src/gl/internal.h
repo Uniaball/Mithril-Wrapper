@@ -189,6 +189,12 @@ extern uint64_t g_gl_draw_calls;   // DrawCommon accepted a draw
 extern uint64_t g_gl_fetch_fail;   // FetchAttribRowBits failed -> draw dropped
 uint64_t GetGlDrawCalls();         // extern "C" mithril_gl_draw_calls()
 uint64_t GetGlFetchFail();         // extern "C" mithril_gl_fetch_fail()
+// Clear-event counters: total glClear/glClearBuffer* calls and how many of
+// them included the color buffer. A dark device target with a growing
+// draws_vk but zero color clears pins the black to the draw path; a nonzero
+// color-clear count with a black readback points at the clear itself.
+uint64_t GetGlClears();            // total clear calls
+uint64_t GetGlColorClears();       // clear calls that cleared color
 
 // IEEE 754 half (binary16) -> float.
 float HalfToFloat(uint16_t h);
