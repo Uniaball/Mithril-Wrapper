@@ -24,3 +24,16 @@ index 561978f..e4e3684 100644
  	echo '[Amethyst v$(VERSION)] native - end'
  
  java:
+diff --git a/Natives/CMakeLists.txt b/Natives/CMakeLists.txt
+index d6bf937..c1e4d1d 100644
+--- a/Natives/CMakeLists.txt
++++ b/Natives/CMakeLists.txt
+@@ -11,7 +11,7 @@ endif()
+ 
+ configure_file(${CMAKE_CURRENT_LIST_DIR}/config.h.in ${CMAKE_CURRENT_LIST_DIR}/config.h)
+ 
+-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -target arm64-apple-ios -mcpu=apple-a8 -fcommon -fobjc-arc -ObjC -F'${CMAKE_OSX_SYSROOT}/System/Cryptexes/OS/System/Library/Frameworks'")
++set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mcpu=apple-a8 -fcommon -fobjc-arc -ObjC -F'${CMAKE_OSX_SYSROOT}/System/Cryptexes/OS/System/Library/Frameworks'")
+ set(CMAKE_C_FLAGS_DEBUG "-funwind-tables -g")
+ 
+ if("${CMAKE_HOST_SYSTEM_NAME}" MATCHES "Linux|^GNU$|Android")

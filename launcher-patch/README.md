@@ -16,7 +16,8 @@
 | --- | --- |
 | `air-with-mithril-cli-f8035a1.patch` | 为启动器添加 CLI / 环境变量自动化入口 |
 | `air-with-mithril-skip-mobileglues-f8035a1.patch` | 跳过 MobileGlues 构建（不参与 mithril 测试，其预编译库为 iOS 设备切片，导致 simulator 构建失败） |
-| `air-with-mithril-simulator-target-f8035a1.patch` | native 编译加 `-target arm64-apple-ios14.0-simulator`（C/CXX），统一为 simulator 平台，避免"built for iOS vs iOS-simulator"链接冲突 |
+| `air-with-mithril-simulator-target-f8035a1.patch` | 统一为 simulator 平台，避免"built for iOS vs iOS-simulator"链接冲突：Makefile 的 native 编译加 `-target arm64-apple-ios14.0-simulator`（C/CXX/linker），并移除 `Natives/CMakeLists.txt` 里硬编码的 `-target arm64-apple-ios`（设备目标，会覆盖上面的 simulator target，导致 AFNetworking 等 `.m` 对象被编成设备切片） |
+| `air-with-mithril-skip-altkit-f8035a1.patch` | 从 `AngelAuraAmethyst` 链接中移除 `AltKit` / `CAltKit`（预编译的 iOS 设备切片 framework，会让 simulator 链接失败）。仅用于 JIT 使能，不参与 mithril 渲染测试 |
 
 ## 如何复现
 
