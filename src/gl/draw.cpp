@@ -507,16 +507,19 @@ uint64_t g_gl_fetch_fail = 0;
 uint64_t GetGlDrawCalls() { return g_gl_draw_calls; }
 uint64_t GetGlFetchFail() { return g_gl_fetch_fail; }
 
-// M8 device black-screen probe (called by vk::Present on the very first swap,
-// env-gated by MITHRIL_SELFTEST_FRAME=1): record one fullscreen red-quad
-// draw through the real GL entry points -- shader program, UBO compose,
-// vertex fetch, pipeline, submit -- and flush it immediately, so the next
-// present blits red before the app draws anything. A red first frame on a
-// device that otherwise renders black pins the fault to app-side content
-// (shaders/UBO/textures); persistent black pins it to the engine's GPU
-// execution itself. One-shot, and inert without the env var.
+// M8 device black-screen probe (called by vk::Present on the very first swap):
+// record one fullscreen red-quad draw through the real GL entry points --
+// shader program, UBO compose, vertex fetch, pipeline, submit -- and flush it
+// immediately, so the next present blits red before the app draws anything.
+// A red first frame on a device that otherwise renders black pins the fault to
+// app-side content (shaders/UBO/textures); persistent black pins it to the
+// engine's GPU execution itself. One-shot, and ON by default (env vars are not
+// reliably settable on a real device); MITHRIL_SELFTEST_FRAME=0 disables it.
 void RunGLSelfTestOnce() {
-    static bool s_armed = getenv("MITHRIL_SELFTEST_FRAME") != nullptr;
+    static bool s_armed = ([]() {
+        const char* v = getenv("MITHRIL_SELFTEST_FRAME");
+        return !v || std::strcmp(v, "0") != 0;
+    })();
     static bool s_done = false;
     if (!s_armed || s_done) return;
     s_done = true;

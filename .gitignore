@@ -28,5 +28,12 @@ tests/render3d/
 # legacy / tooling
 .trae/
 latestlog.txt
+
+# local investigation clones (never commit these)
+.launcher-src/
+.launcher-verify/
+.launcher-inspect/
+.mvk-src/
+.launcher-fresh/
 tests/multiubo_smoke
 tests/mcshape_smoke
