@@ -1,0 +1,88 @@
+diff --git a/Natives/LauncherNavigationController.m b/Natives/LauncherNavigationController.m
+index 5f7a73a..d31733a 100644
+--- a/Natives/LauncherNavigationController.m
++++ b/Natives/LauncherNavigationController.m
+@@ -761,4 +761,83 @@ static void *ProgressObserverContext = &ProgressObserverContext;
+     [[NSNotificationCenter defaultCenter] postNotificationName:@"UpdateAccountInfo" object:nil];
+ }
+ 
++#pragma mark - CLI / automation bootstrap (for CI e2e)
++
++- (void)viewDidAppear:(BOOL)animated {
++    [super viewDidAppear:animated];
++    [self cliBootstrap];
++}
++
++// Reads AIR_* environment variables (forwarded to the process via
++// SIMCTL_CHILD_AIR_* / launch arguments) to override preferences and, when
++// requested, auto-download + auto-launch a Minecraft version without touching
++// the UI. Used by the mithril CI e2e job (test.yml -> test-ios-launcher-e2e).
++- (void)cliBootstrap {
++    static BOOL cliBootstrapped = NO;
++    if (cliBootstrapped) { return; }
++    cliBootstrapped = YES;
++
++    NSDictionary *env = NSProcessInfo.processInfo.environment;
++
++    // --- Preference overrides (best-effort, safe) ---
++    NSString *renderer = env[@"AIR_RENDERER"];
++    if (renderer.length > 0) {
++        setPrefString(@"video.renderer", renderer);
++        NSLog(@"[CLI] video.renderer = %@", renderer);
++    }
++    NSString *javaArgs = env[@"AIR_JAVA_ARGS"];
++    if (javaArgs.length > 0) {
++        setPrefString(@"java.java_args", javaArgs);
++        NSLog(@"[CLI] java.java_args set");
++    }
++    NSString *memory = env[@"AIR_MEMORY_MB"];
++    if (memory.length > 0) {
++        setPrefInt(@"java.allocated_memory", memory.intValue);
++        NSLog(@"[CLI] java.allocated_memory = %@", memory);
++    }
++    NSString *resolution = env[@"AIR_RESOLUTION"];
++    if (resolution.length > 0) {
++        setPrefInt(@"video.resolution", resolution.intValue);
++        NSLog(@"[CLI] video.resolution = %@", resolution);
++    }
++    NSString *javaVersion = env[@"AIR_JAVA_VERSION"];
++    if (javaVersion.length > 0) {
++        setPrefString(@"java.java_version", javaVersion);
++        NSLog(@"[CLI] java.java_version = %@", javaVersion);
++    }
++
++    // --- Auto-launch ---
++    if ([env[@"AIR_AUTOLAUNCH"] isEqualToString:@"1"]) {
++        NSString *version = env[@"AIR_VERSION"];
++        if (version.length == 0) {
++            version = self.versionTextField.text;
++        }
++        if (version.length == 0) {
++            NSLog(@"[CLI] AIR_AUTOLAUNCH=1 but no AIR_VERSION; skipping");
++            return;
++        }
++
++        // Ensure an offline account exists so launchMinecraft: does not stall
++        // on the account picker in an unattended CI environment.
++        if (BaseAuthenticator.current == nil) {
++            NSString *username = env[@"AIR_USERNAME"] ?: @"Player";
++            LocalAuthenticator *auth = [[LocalAuthenticator alloc] initWithInput:username];
++            [BaseAuthenticator setCurrent:auth];
++            [auth loginWithCallback:^(id status, BOOL success) {
++                dispatch_async(dispatch_get_main_queue(), ^{
++                    [self launchVersionCli:version];
++                });
++            }];
++        } else {
++            [self launchVersionCli:version];
++        }
++    }
++}
++
++- (void)launchVersionCli:(NSString *)version {
++    self.versionTextField.text = version;
++    NSLog(@"[CLI] autolaunching version %@", version);
++    [self launchMinecraft:nil];
++}
++
+ @end
