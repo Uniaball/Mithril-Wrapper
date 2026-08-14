@@ -496,7 +496,9 @@ jobs:
         id: launcher-cache
         with:
           path: launcher-src
-          key: launcher-${{ env.LAUNCHER_REV }}-${{ runner.os }}
+          # -sim2: force a fresh clone so no device-built objects leak into the
+          # simulator build (device objects caused "built for iOS" link errors).
+          key: launcher-${{ env.LAUNCHER_REV }}-${{ runner.os }}-sim2
       - name: Fetch launcher source
         if: steps.launcher-cache.outputs.cache-hit != 'true'
         env:

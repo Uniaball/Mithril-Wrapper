@@ -1,8 +1,8 @@
 diff --git a/Makefile b/Makefile
-index 561978f..21f6e02 100644
+index 561978f..e4e3684 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -266,7 +266,10 @@ native: dep_mg
+@@ -266,15 +266,18 @@ native: dep_mg
  		-DCMAKE_OSX_SYSROOT="$(SDKPATH)" \
  		-DCMAKE_OSX_ARCHITECTURES=arm64 \
  		-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
@@ -14,3 +14,13 @@ index 561978f..21f6e02 100644
  		-DCONFIG_BRANCH="$(BRANCH)" \
  		-DCONFIG_COMMIT="$(COMMIT)" \
  		-DCONFIG_RELEASE=$(RELEASE) \
+ 		..
+ 
+-	cmake --build $(WORKINGDIR) --config $(CMAKE_BUILD_TYPE) -j$(JOBS)
++	cmake --build $(WORKINGDIR) --config $(CMAKE_BUILD_TYPE) -j$(JOBS) --target AngelAuraAmethyst awt_xawt audio_capture AmethystAccountJNI ltw
+ 	#	--target awt_headless awt_xawt libOSMesaOverride.dylib tinygl4angle AngelAuraAmethyst
+-	rm $(WORKINGDIR)/libawt_headless.dylib
++	rm -f $(WORKINGDIR)/libawt_headless.dylib
+ 	echo '[Amethyst v$(VERSION)] native - end'
+ 
+ java:
