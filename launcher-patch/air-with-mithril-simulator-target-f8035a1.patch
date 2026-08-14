@@ -1,14 +1,16 @@
 diff --git a/Makefile b/Makefile
-index 561978f..10a2bce 100644
+index 561978f..21f6e02 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -266,7 +266,8 @@ native: dep_mg
+@@ -266,7 +266,10 @@ native: dep_mg
  		-DCMAKE_OSX_SYSROOT="$(SDKPATH)" \
  		-DCMAKE_OSX_ARCHITECTURES=arm64 \
  		-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
 -		-DCMAKE_C_FLAGS="-arch arm64" \
 +		-DCMAKE_C_FLAGS="-arch arm64 -target arm64-apple-ios14.0-simulator" \
 +		-DCMAKE_CXX_FLAGS="-arch arm64 -target arm64-apple-ios14.0-simulator" \
++		-DCMAKE_SHARED_LINKER_FLAGS="-target arm64-apple-ios14.0-simulator" \
++		-DCMAKE_EXE_LINKER_FLAGS="-target arm64-apple-ios14.0-simulator" \
  		-DCONFIG_BRANCH="$(BRANCH)" \
  		-DCONFIG_COMMIT="$(COMMIT)" \
  		-DCONFIG_RELEASE=$(RELEASE) \
