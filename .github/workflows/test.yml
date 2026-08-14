@@ -389,15 +389,33 @@ jobs:
           # load iOS-simulator binaries, so simctl spawn /bin/sh aborts).
           # SIMCTL_CHILD_* forwards env into the spawned process; the test reads
           # MITHRIL_LIB_PATH so it does not depend on the CWD.
+          # Record the whole run so a crash or black screen is visible after
+          # the fact; recordVideo streams until it gets SIGINT.
+          xcrun simctl io "$UDID" recordVideo --codec h264 /tmp/mr/mcshape_sim.mp4 &
+          REC_PID=$!
+          sleep 1
           SIMCTL_CHILD_MITHRIL_LIB_PATH=/tmp/mr/output/libmithril.dylib \
           SIMCTL_CHILD_MVK_CONFIG_LOG_LEVEL=3 \
           SIMCTL_CHILD_MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 \
             xcrun simctl spawn "$UDID" /tmp/mr/mcshape_smoke_sim \
             > mcshape_sim.txt 2>&1 || true
+          sleep 1
+          kill -INT "$REC_PID" 2>/dev/null || true
+          wait "$REC_PID" 2>/dev/null || true
           cat mcshape_sim.txt
           # dump any simulator crash reports for the smoke binary
           ls -t "$HOME/Library/Logs/DiagnosticReports/" 2>/dev/null | head -5 || true
+          # keep the recording as an artifact even when the check fails below
+          cp /tmp/mr/mcshape_sim.mp4 mcshape_sim.mp4 2>/dev/null || true
           grep -q "MCSHAPE SMOKE ALL PASSED" mcshape_sim.txt
+
+      - name: Upload iOS simulator screen recording
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mithril-ios-sim-screen-recording
+          path: mcshape_sim.mp4
+          if-no-files-found: warn
 
   # ---- Linux: run the smoke tests against the Linux .so --------------------
   test-linux:
