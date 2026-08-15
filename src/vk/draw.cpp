@@ -216,6 +216,7 @@ void Draw(const DrawParams& params) {
         di.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         tis.push_back(di);
         op.tex_binds.push_back({sb.binding, di});
+        op.tex_ids.push_back(sb.tex_id);
         VkWriteDescriptorSet ws{};
         ws.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         ws.dstSet = op.desc_set;
@@ -504,6 +505,42 @@ void SubmitFlush(bool wait) {
         TransitionLayout(frame.cmd, color_img, *color_layout,
                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         *color_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+    // M8: layout-safe sampling of FBO colour textures. Descriptors declare
+    // every sampled texture SHADER_READ_ONLY_OPTIMAL, but a texture that an
+    // earlier pass in this frame rendered into is still COLOR_ATTACHMENT_-
+    // OPTIMAL. MC renders its main framebuffer to a texture and immediately
+    // samples it to blit to screen; without this barrier MoltenVK returns
+    // undefined texels (alpha 0 -> MC's shader discard -> black screen),
+    // while lavapipe tolerates the mismatch so local tests never caught it.
+    if (!frame.frame_draws.empty()) {
+        for (const DrawOp& op : frame.frame_draws) {
+            for (uint32_t tid : op.tex_ids) {
+                for (auto& kv : g.framebuffers) {
+                    FboObj& sfbo = kv.second;
+                    if (sfbo.color_layout !=
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+                        continue;
+                    for (size_t i = 0; i < sfbo.colors.size(); ++i) {
+                        const FboSlot& cs = sfbo.colors[i];
+                        if (cs.is_texture && cs.tex_id == tid) {
+                            VkImage simg = FboColorImage(sfbo, i);
+                            if (simg != VK_NULL_HANDLE) {
+                                ML_LOG_DEBUG(
+                                    "vk: sampled FBO tex %u -> SHADER_READ_ONLY",
+                                    tid);
+                                TransitionLayout(frame.cmd, simg,
+                                                 sfbo.color_layout,
+                                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                                sfbo.color_layout =
+                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
     // Bring the FBO colour resolve targets back to color-attachment optimal
     // (the resolve blit in the render pass expects that layout).

@@ -66,6 +66,8 @@
 #define GL_FRAMEBUFFER_COMPLETE 0x8CD5
 #define GL_RENDERBUFFER        0x8D41
 #define GL_TEXTURE_2D          0x0DE1
+#define GL_TEXTURE0            0x84C0
+#define GL_TRIANGLE_FAN        0x0006
 #define GL_NEAREST             0x2600
 #define GL_LINEAR              0x2601
 #define GL_COLOR_ATTACHMENT0   0x8CE0
@@ -106,6 +108,8 @@ typedef void (*fn_glAttachShader)(GLuint, GLuint);
 typedef void (*fn_glLinkProgram)(GLuint);
 typedef void (*fn_glUseProgram)(GLuint);
 typedef GLint (*fn_glGetUniformLocation)(GLuint, const char*);
+typedef void (*fn_glUniform1i)(GLint, int);
+typedef void (*fn_glActiveTexture)(GLenum);
 typedef void (*fn_glUniform4f)(GLint, float, float, float, float);
 typedef void (*fn_glGenVertexArrays)(GLsizei, GLuint*);
 typedef void (*fn_glBindVertexArray)(GLuint);
@@ -113,6 +117,7 @@ typedef void (*fn_glGenBuffers)(GLsizei, GLuint*);
 typedef void (*fn_glBindBuffer)(GLenum, GLuint);
 typedef void (*fn_glBufferData)(GLenum, GLsizeiptr, const void*, GLenum);
 typedef void (*fn_glEnableVertexAttribArray)(GLuint);
+typedef void (*fn_glDisableVertexAttribArray)(GLuint);
 typedef void (*fn_glVertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const GLvoid*);
 typedef void (*fn_glDrawArrays)(GLenum, GLint, GLsizei);
 typedef void (*fn_glFinish)(void);
@@ -183,6 +188,28 @@ static const char* FS_MRT =
     "    fragColor1 = vec4(0.0, 1.0, 0.0, 1.0);\n"
     "}\n";
 
+/* S5-blitToScreen: samples an FBO colour texture (rendered earlier in the
+ * same frame) into the default framebuffer -- Minecraft's per-frame
+ * RenderTarget.blitToScreen path. */
+static const char* VS_TEX =
+    "#version 150\n"
+    "layout(location=0) in vec3 pos;\n"
+    "layout(location=2) in vec2 uv;\n"
+    "out vec2 vUV;\n"
+    "void main() {\n"
+    "    vUV = uv;\n"
+    "    gl_Position = vec4(pos, 1.0);\n"
+    "}\n";
+
+static const char* FS_TEX =
+    "#version 150\n"
+    "uniform sampler2D uTex;\n"
+    "in vec2 vUV;\n"
+    "layout(location=0) out vec4 fragColor;\n"
+    "void main() {\n"
+    "    fragColor = texture(uTex, vUV);\n"
+    "}\n";
+
 int main(void) {
 #if defined(__APPLE__)
     const char* libpath = "./output/libmithril.dylib";
@@ -214,6 +241,8 @@ int main(void) {
     fn_glLinkProgram linkProgram = (fn_glLinkProgram)dlsym(h, "glLinkProgram");
     fn_glUseProgram useProgram = (fn_glUseProgram)dlsym(h, "glUseProgram");
     fn_glGetUniformLocation getUniformLoc = (fn_glGetUniformLocation)dlsym(h, "glGetUniformLocation");
+    fn_glUniform1i uniform1i = (fn_glUniform1i)dlsym(h, "glUniform1i");
+    fn_glActiveTexture activeTexture = (fn_glActiveTexture)dlsym(h, "glActiveTexture");
     fn_glUniform4f uniform4f = (fn_glUniform4f)dlsym(h, "glUniform4f");
     fn_glGenVertexArrays genVertexArrays = (fn_glGenVertexArrays)dlsym(h, "glGenVertexArrays");
     fn_glBindVertexArray bindVertexArray = (fn_glBindVertexArray)dlsym(h, "glBindVertexArray");
@@ -221,6 +250,7 @@ int main(void) {
     fn_glBindBuffer bindBuffer = (fn_glBindBuffer)dlsym(h, "glBindBuffer");
     fn_glBufferData bufferData = (fn_glBufferData)dlsym(h, "glBufferData");
     fn_glEnableVertexAttribArray enableAttrib = (fn_glEnableVertexAttribArray)dlsym(h, "glEnableVertexAttribArray");
+    fn_glDisableVertexAttribArray disableAttrib = (fn_glDisableVertexAttribArray)dlsym(h, "glDisableVertexAttribArray");
     fn_glVertexAttribPointer vertexAttribPtr = (fn_glVertexAttribPointer)dlsym(h, "glVertexAttribPointer");
     fn_glDrawArrays drawArrays = (fn_glDrawArrays)dlsym(h, "glDrawArrays");
     fn_glFinish finish = (fn_glFinish)dlsym(h, "glFinish");
@@ -254,6 +284,7 @@ int main(void) {
           attachShader && linkProgram && useProgram && getUniformLoc &&
           uniform4f && genVertexArrays && bindVertexArray && genBuffers &&
           bindBuffer && bufferData && enableAttrib && vertexAttribPtr &&
+          disableAttrib &&
           drawArrays && finish && readPixels &&
           genFramebuffers && bindFramebuffer && deleteFramebuffers &&
           framebufferTexture2D && framebufferRenderbuffer &&
@@ -835,6 +866,79 @@ int main(void) {
         deleteRenderbuffers(1, &rbo);
     }
 
+    /* -- S5-blitToScreen: render into an FBO texture, then sample that
+       texture into the default framebuffer -- Minecraft's per-frame path,
+       which previously left the FBO in colour-attachment layout while the
+       descriptor claimed shader-read (undefined texels on MoltenVK). */
+    {
+        GLuint fbo, tex;
+        genFramebuffers(1, &fbo);
+        genTextures(1, &tex);
+        bindTexture(GL_TEXTURE_2D, tex);
+        texImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 32, 32, 0, GL_RGBA,
+                   GL_UNSIGNED_BYTE, 0);
+        bindFramebuffer(GL_FRAMEBUFFER, fbo);
+        framebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                             GL_TEXTURE_2D, tex, 0);
+
+        /* Solid red into the FBO. */
+        clearColor(1, 0, 0, 1.0f);
+        clear(GL_COLOR_BUFFER_BIT);
+        float red[3][7] = {
+            {-1, -1, 0.0f, 1, 0, 0, 1},
+            { 3, -1, 0.0f, 1, 0, 0, 1},
+            {-1,  3, 0.0f, 1, 0, 0, 1},
+        };
+        bufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(red), red, 0x88E4);
+        useProgram(prog);
+        drawArrays(GL_TRIANGLES, 0, 3);
+        /* No finish() here: Minecraft renders the FBO and samples it within
+         * the same frame (blitToScreen), so the layout fix must fire inside
+         * one SubmitFlush. */
+
+        /* Back on the default framebuffer, draw a fullscreen quad sampling
+           the FBO texture (MC's blitToScreen). */
+        bindFramebuffer(GL_FRAMEBUFFER, 0);
+        GLuint vst = createShader(GL_VERTEX_SHADER);
+        GLuint fst = createShader(GL_FRAGMENT_SHADER);
+        shaderSource(vst, 1, &VS_TEX, 0);
+        shaderSource(fst, 1, &FS_TEX, 0);
+        compileShader(vst);
+        compileShader(fst);
+        GLuint progTex = createProgram();
+        attachShader(progTex, vst);
+        attachShader(progTex, fst);
+        linkProgram(progTex);
+        useProgram(progTex);
+        GLint uloc = getUniformLoc(progTex, "uTex");
+        activeTexture(GL_TEXTURE0);
+        bindTexture(GL_TEXTURE_2D, tex);
+        uniform1i(uloc, 0);
+
+        float quad[4][5] = {
+            {-1, -1, 0.0f, 0, 0},
+            { 1, -1, 0.0f, 1, 0},
+            { 1,  1, 0.0f, 1, 1},
+            {-1,  1, 0.0f, 0, 1},
+        };
+        bufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(quad), quad, 0x88E4);
+        enableAttrib(0);
+        vertexAttribPtr(0, 3, GL_FLOAT, GL_FALSE, 20, 0);
+        enableAttrib(2);
+        vertexAttribPtr(2, 2, GL_FLOAT, GL_FALSE, 20, (const GLvoid*)12);
+        disableAttrib(1);  /* leftover from the main program's mesh layout */
+        clearColor(0, 0, 0, 1.0f);
+        clear(GL_COLOR_BUFFER_BIT);
+        drawArrays(GL_TRIANGLE_FAN, 0, 4);
+        finish();
+        readPixels(256, 300, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        CHECK(px_match(px, 255, 0, 0, 255),
+              "FBO texture sampled after render draws red (r=%d g=%d b=%d)",
+              px[0], px[1], px[2]);
+
+        deleteFramebuffers(1, &fbo);
+        deleteTextures(1, &tex);
+    }
     dlclose(h);
 
     if (failures == 0) { printf("\nFBO SMOKE ALL PASSED\n"); return 0; }

@@ -284,6 +284,8 @@ void SetFramebuffer(uint64_t fbo_id, const FboSpec& spec) {
     f.width = spec.width;
     f.height = spec.height;
     f.dirty = true;
+    f.color_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    f.depth_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 }
 
 void DestroyFramebuffer(uint64_t fbo_id) {

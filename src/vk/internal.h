@@ -263,6 +263,10 @@ struct DrawOp {
     VkDeviceSize ubo_range = 0;
     // Sampler descriptor images for this draw (one per samper bound).
     std::vector<std::pair<uint32_t, VkDescriptorImageInfo>> tex_binds;
+    // GL texture ids parallel to tex_binds, so the submit pass can transition
+    // any sampled texture that is still an FBO colour attachment (rendered
+    // this frame) into SHADER_READ_ONLY_OPTIMAL before the draw.
+    std::vector<uint32_t> tex_ids;
     // M5: pipeline-affecting state captured at draw-record time.
     PipelineState pipe;
     // M6 stage D: occlusion query slot bracketing this draw
