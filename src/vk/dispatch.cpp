@@ -145,6 +145,19 @@ bool EnsureInit() {
     app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app.pApplicationName = "Mithril-Wrapper";
     app.apiVersion = VK_API_VERSION_1_1;
+    // Old Android loaders/drivers (Vulkan 1.0 era) reject a 1.1 application
+    // info with VK_ERROR_INCOMPATIBLE_DRIVER. vkEnumerateInstanceVersion is a
+    // loader-global command (present on 1.1+ loaders); when absent or below
+    // 1.1, request 1.0 and fall back below (the only 1.1-isms in use are the
+    // VkPhysicalDeviceFeatures2 pNext chain, which 1.0 drivers ignore).
+    {
+        auto enum_ver = reinterpret_cast<PFN_vkEnumerateInstanceVersion>(
+            dlsym(g.loader, "vkEnumerateInstanceVersion"));
+        uint32_t loader_ver = VK_API_VERSION_1_0;
+        if (enum_ver) enum_ver(&loader_ver);
+        if (loader_ver < VK_API_VERSION_1_1)
+            app.apiVersion = VK_API_VERSION_1_0;
+    }
     VkInstanceCreateInfo ici{};
     ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     ici.pApplicationInfo = &app;
@@ -170,12 +183,29 @@ bool EnsureInit() {
     // when this flag is set; VK_KHR_portability_enumeration pairs with it.
     ici.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 #endif
+#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+    // Android: the OS ships a real Vulkan loader + ICDs; ANativeWindow surfaces
+    // come through VK_KHR_android_surface (no portability machinery needed).
+    const char* kInstExts[] = {
+        VK_KHR_SURFACE_EXTENSION_NAME,
+        VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
+    };
+    ici.enabledExtensionCount =
+        (uint32_t)(sizeof(kInstExts) / sizeof(kInstExts[0]));
+    ici.ppEnabledExtensionNames = kInstExts;
 #endif
     if (g.fn.CreateInstance(&ici, nullptr, &g.instance) != VK_SUCCESS) {
-        ML_LOG_ERROR("vk: vkCreateInstance failed");
-        dlclose(g.loader);
-        g.loader = nullptr;
-        return false;
+        VkInstanceCreateInfo ici_fallback = ici;
+        ici_fallback.pApplicationInfo = &app;
+        app.apiVersion = VK_API_VERSION_1_0;
+        if (g.fn.CreateInstance(&ici_fallback, nullptr, &g.instance) !=
+            VK_SUCCESS) {
+            ML_LOG_ERROR("vk: vkCreateInstance failed");
+            dlclose(g.loader);
+            g.loader = nullptr;
+            return false;
+        }
+        ML_LOG_WARN("vk: created instance at API 1.0 (1.1 rejected)");
     }
 
     // Resolve instance-level functions against the live instance (global
@@ -197,6 +227,9 @@ bool EnsureInit() {
     LOAD_INST(GetPhysicalDeviceSurfaceSupportKHR);
 #ifdef VK_USE_PLATFORM_METAL_EXT
     LOAD_INST(CreateMetalSurfaceEXT);
+#endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+    LOAD_INST(CreateAndroidSurfaceKHR);
 #endif
 #undef LOAD_INST
 
@@ -269,7 +302,7 @@ bool EnsureInit() {
     // express matches GL's default, so without it the pipeline simply keeps
     // the implicit behaviour.
     std::vector<const char*> dev_exts;
-#ifdef VK_USE_PLATFORM_METAL_EXT
+#if defined(VK_USE_PLATFORM_METAL_EXT) || defined(VK_USE_PLATFORM_ANDROID_KHR)
     dev_exts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 #endif
     uint32_t n_ext = 0;

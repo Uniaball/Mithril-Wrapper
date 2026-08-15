@@ -51,6 +51,9 @@ struct FnTable {
 #ifdef VK_USE_PLATFORM_METAL_EXT
     ML_FN(CreateMetalSurfaceEXT);
 #endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+    ML_FN(CreateAndroidSurfaceKHR);
+#endif
     // device-level
     ML_FN(GetDeviceQueue);
     ML_FN(DeviceWaitIdle);

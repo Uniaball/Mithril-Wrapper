@@ -1,19 +1,24 @@
 // Mithril-Wrapper Vulkan backend -- swapchain + present (Stage B).
-// Wraps a CAMetalLayer (handed in through EGL eglCreateWindowSurface) in a
-// VK_EXT_metal_surface + VK_KHR_swapchain. The GL render continues into the
-// offscreen target exactly as before; Present() copies that finished image
-// into the acquired swapchain image and queues the present, synchronising
-// with an image-available semaphore on acquire and a per-image render-finished
-// semaphore before present.
+// Wraps a native window (CAMetalLayer via VK_EXT_metal_surface on Apple,
+// ANativeWindow via VK_KHR_android_surface on Android) in a
+// VK_KHR_swapchain. The GL render continues into the offscreen target exactly
+// as before; Present() copies that finished image into the acquired swapchain
+// image and queues the present, synchronising with an image-available
+// semaphore on acquire and a per-image render-finished semaphore before
+// present.
 //
-// On non-Apple builds (or without a native layer) every function degrades to
-// a harmless no-op/false so the Linux lavapipe offscreen path is unchanged.
+// On builds without a platform surface (or without a native layer) every
+// function degrades to a harmless no-op/false so the Linux lavapipe offscreen
+// path is unchanged.
 
 #include "internal.h"
 
 #ifdef VK_USE_PLATFORM_METAL_EXT
 #include <objc/message.h>
 #include <objc/runtime.h>
+#endif
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+#include <android/native_window.h>
 #endif
 
 #include <chrono>
@@ -31,7 +36,23 @@ void RunGLSelfTestOnce();
 
 namespace mithril::vk {
 
-#ifdef VK_USE_PLATFORM_METAL_EXT
+#if defined(VK_USE_PLATFORM_METAL_EXT) || defined(VK_USE_PLATFORM_ANDROID_KHR)
+
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+
+static VkSurfaceKHR CreateAndroidSurface(void* layer) {
+    if (!g.fn.CreateAndroidSurfaceKHR) return VK_NULL_HANDLE;
+    VkAndroidSurfaceCreateInfoKHR sci{};
+    sci.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+    sci.window = (ANativeWindow*)layer;
+    VkSurfaceKHR surf = VK_NULL_HANDLE;
+    if (g.fn.CreateAndroidSurfaceKHR(g.instance, &sci, nullptr, &surf) !=
+        VK_SUCCESS)
+        return VK_NULL_HANDLE;
+    return surf;
+}
+
+#else  // VK_USE_PLATFORM_METAL_EXT
 
 // objc runtime: confirm the opaque pointer really is a CAMetalLayer before
 // handing it to VkMetalSurfaceCreateInfoEXT (eglCreateWindowSurface may be
@@ -58,11 +79,18 @@ static VkSurfaceKHR CreateMetalSurface(void* layer) {
     return surf;
 }
 
+#endif  // VK_USE_PLATFORM_METAL_EXT (surface-creation half of the block)
+
 static bool EnsureSwapchain() {
     if (g.swap.handle) return true;
     if (!g.native_layer || !g.initialized) return false;
 
-    VkSurfaceKHR surface = CreateMetalSurface(g.native_layer);
+    VkSurfaceKHR surface;
+#ifdef VK_USE_PLATFORM_METAL_EXT
+    surface = CreateMetalSurface(g.native_layer);
+#else
+    surface = CreateAndroidSurface(g.native_layer);
+#endif
     if (surface == VK_NULL_HANDLE) return false;
     g.swap.surface = surface;
 
@@ -228,9 +256,32 @@ static void DestroySwapchain() {
     g.swap.acquire_valid = false;
 }
 
-#endif  // VK_USE_PLATFORM_METAL_EXT
+#endif  // VK_USE_PLATFORM_METAL_EXT || VK_USE_PLATFORM_ANDROID_KHR
 
 void SetNativeLayer(void* layer) {
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+    // No objc-runtime "isKindOfClass:" guard exists for ANativeWindow: any
+    // non-null pointer is dereferenced by the driver inside
+    // vkCreateAndroidSurfaceKHR, so a fake window segfaults. The EGL contract
+    // requires a real ANativeWindow here; MITHRIL_NO_WINDOW forces the
+    // offscreen fallback for window-less harnesses.
+    if (!layer || getenv("MITHRIL_NO_WINDOW")) {
+        g.native_layer = nullptr;
+        if (layer)
+            ML_LOG_WARN("vk: native window suppressed (MITHRIL_NO_WINDOW); "
+                        "staying offscreen");
+        return;
+    }
+    g.native_layer = layer;
+    // Pre-size the offscreen target from the real window so the first
+    // present has the correct extent even before the surface is queried.
+    int w = ANativeWindow_getWidth((ANativeWindow*)layer);
+    int h = ANativeWindow_getHeight((ANativeWindow*)layer);
+    if (w > 0 && h > 0 &&
+        ((uint32_t)w != g.width || (uint32_t)h != g.height))
+        SetTargetSize((uint32_t)w, (uint32_t)h);
+    return;
+#endif
     g.native_layer = layer;
 #ifdef VK_USE_PLATFORM_METAL_EXT
     if (layer && !IsCametalLayer(layer)) {
@@ -260,7 +311,7 @@ void SetVsync(bool enable) {
 
 bool EnsurePresentReady() {
     if (!EnsureInit()) return false;
-#ifdef VK_USE_PLATFORM_METAL_EXT
+#if defined(VK_USE_PLATFORM_METAL_EXT) || defined(VK_USE_PLATFORM_ANDROID_KHR)
     return g.native_layer ? EnsureSwapchain() : true;
 #else
     return true;
@@ -410,11 +461,11 @@ bool Present() {
         }
     }
 
-#ifdef VK_USE_PLATFORM_METAL_EXT
-    // No native window (offscreen fallback: the contract smoke passes a fake
-    // non-CAMetalLayer pointer, which SetNativeLayer rejected) means there is
+#if defined(VK_USE_PLATFORM_METAL_EXT) || defined(VK_USE_PLATFORM_ANDROID_KHR)
+    // No native window (offscreen fallback: e.g. the contract smoke passes a
+    // placeholder pointer, which SetNativeLayer rejected) means there is
     // nothing to present to -- this swap is a successful no-op, matching the
-    // offscreen lavapipe contract. Only a live layer that fails to build a
+    // offscreen lavapipe contract. Only a live window that fails to build a
     // swapchain is a genuine present failure.
     if (!g.native_layer) return true;
     if (!EnsureSwapchain()) return false;
@@ -569,30 +620,31 @@ bool Present() {
     g.swap.acquire_valid = false;
     return true;
 #else
-    // Non-Apple build: no Metal surface / swapchain. The offscreen target is
-    // the only sink, so the implicit flush above already did all the work;
-    // report success so EGL callers (and the lavapipe test contract) see
-    // EGL_TRUE rather than a spurious present failure.
+    // No platform surface support in this build (Linux offscreen dev loop):
+    // the offscreen target is the only sink, so the implicit flush above
+    // already did all the work; report success so EGL callers (and the
+    // lavapipe test contract) see EGL_TRUE rather than a spurious present
+    // failure.
     return true;
 #endif
 }
 
 uint32_t PresentWidth() {
-#ifdef VK_USE_PLATFORM_METAL_EXT
+#if defined(VK_USE_PLATFORM_METAL_EXT) || defined(VK_USE_PLATFORM_ANDROID_KHR)
     if (g.swap.handle) return g.swap.extent.width;
 #endif
     return TargetWidth();
 }
 
 uint32_t PresentHeight() {
-#ifdef VK_USE_PLATFORM_METAL_EXT
+#if defined(VK_USE_PLATFORM_METAL_EXT) || defined(VK_USE_PLATFORM_ANDROID_KHR)
     if (g.swap.handle) return g.swap.extent.height;
 #endif
     return TargetHeight();
 }
 
 bool HasSwapchain() {
-#ifdef VK_USE_PLATFORM_METAL_EXT
+#if defined(VK_USE_PLATFORM_METAL_EXT) || defined(VK_USE_PLATFORM_ANDROID_KHR)
     return g.swap.handle != VK_NULL_HANDLE;
 #else
     return false;

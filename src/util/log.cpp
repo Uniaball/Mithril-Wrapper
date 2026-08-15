@@ -4,6 +4,10 @@
 #include <cstdio>
 #include <cstdlib>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
 namespace mithril {
 namespace util {
 
@@ -33,6 +37,15 @@ void Log(LogLevel level, const char* fmt, ...) {
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     fprintf(stderr, "%s %s\n", kPrefix[static_cast<int>(level)], buf);
+#ifdef __ANDROID__
+    // stderr is invisible on Android; mirror every line into logcat.
+    static const android_LogPriority kPri[] = {ANDROID_LOG_ERROR,
+                                               ANDROID_LOG_WARN,
+                                               ANDROID_LOG_INFO,
+                                               ANDROID_LOG_DEBUG};
+    __android_log_print(kPri[static_cast<int>(level)], "mithril",
+                        "%s%s", kPrefix[static_cast<int>(level)], buf);
+#endif
 }
 
 } // namespace util

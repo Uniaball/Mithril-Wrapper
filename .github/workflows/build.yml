@@ -145,3 +145,61 @@ jobs:
           name: libmithril-linux-x86_64
           path: output/libmithril.so
           if-no-files-found: error
+
+  # ---- Android: NDK cross-compile libmithril.so (arm64-v8a) ----------------
+  # Uses the NDK bundled with the GitHub ubuntu runner image
+  # (ANDROID_NDK_LATEST_HOME); no download step needed.
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install ccache
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ccache
+
+      - name: Cache ccache (android)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ${{ runner.os }}-android-ccache-${{ github.ref }}
+          restore-keys: |
+            ${{ runner.os }}-android-ccache-
+
+      - name: Locate NDK (runner image)
+        id: ndk
+        run: |
+          if [ -n "$ANDROID_NDK_LATEST_HOME" ] && [ -f "$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake" ]; then
+            echo "ndk=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_OUTPUT"
+          else
+            echo "Android NDK not found via ANDROID_NDK_LATEST_HOME" >&2
+            exit 1
+          fi
+
+      - name: Configure (Android arm64-v8a Release)
+        run: cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=${{ steps.ndk.outputs.ndk }}/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        env:
+          CCACHE_DIR: ~/.cache/ccache
+
+      - name: Build (Android)
+        run: cmake --build build -j$(nproc)
+        env:
+          CCACHE_DIR: ~/.cache/ccache
+
+      - name: Verify exported symbols (Android .so)
+        run: |
+          [ -f output/libmithril.so ] || (echo ".so not found in output/" && exit 1)
+          GL_COUNT=$(nm -D --defined-only output/libmithril.so | awk '{print $3}' | grep -cE '^gl[A-Z0-9]')
+          echo "GL* defined exports: $GL_COUNT"
+          [ "$GL_COUNT" -ge 342 ]
+          EGL_COUNT=$(nm -D --defined-only output/libmithril.so | awk '{print $3}' | grep -c '^egl')
+          echo "egl* defined exports: $EGL_COUNT"
+          [ "$EGL_COUNT" -ge 40 ]
+
+      - name: Upload .so
+        uses: actions/upload-artifact@v4
+        with:
+          name: libmithril-android-arm64-v8a
+          path: output/libmithril.so
+          if-no-files-found: error

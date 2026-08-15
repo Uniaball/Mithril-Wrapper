@@ -44,6 +44,7 @@ GL → Vulkan → Metal（MoltenVK），无 OpenGL ES 参与。
 - **M6 stage F 完成（收尾 + 验收）：342/342 GL 符号全部转真（0 stub）**：
   - S1 补 5（`glClearBuffer{fi,fv,iv,uiv}` + `glGetMultisamplefv`）、S2 补 11（fragData/uniform-block introspection）、S3 补 38（TransformFeedback CPU 计数 + 打包/整型常量 + point 参数）、S4 补 3（multisample texture）、S6 补 2（`glBegin/EndConditionalRender`，MobileGL 降级语义：校验配对/错误路径，不真正门控）；`gen_gl_stubs.py` 重新生成确认 0 stub。
   - `tests/query_smoke.c` 补 ConditionalRender 6 断言（合法 begin/end、嵌套 begin、坏 mode/id、无 begin 直接 end）；回归十三冒烟全过。
+- **M7 完成（Android 支持）**：NDK 交叉编译 `libmithril.so`（arm64-v8a, CI 用 runner 自带 `ANDROID_NDK_LATEST_HOME`）；Android 走系统 `libvulkan.so` + `VK_KHR_android_surface` 真窗口 present（ANativeWindow 经 EGL 透传,`SetNativeLayer` 预取尺寸、`MITHRIL_NO_WINDOW` 离屏逃生门）；instance apiVersion 自适应 1.1→1.0 降级兼容老驱动；`util/log.cpp` 桥接 logcat；所有改动经 `#ifdef VK_USE_PLATFORM_ANDROID_KHR` 隔离,Linux/macOS/iOS 行为不变。
 
 ## 快速构建（Linux 开发循环）
 
@@ -51,6 +52,15 @@ GL → Vulkan → Metal（MoltenVK），无 OpenGL ES 参与。
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 # 产物: output/libmithril.so
+```
+
+Android 交叉编译（arm64-v8a，NDK 需带 CMake toolchain）:
+
+```sh
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
+      -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 -DANDROID_STL=c++_static
+cmake --build build
+# 产物: output/libmithril.so（arm64-v8a，VK_KHR_android_surface）
 ```
 
 ## 冒烟测试

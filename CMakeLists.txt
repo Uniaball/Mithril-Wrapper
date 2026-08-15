@@ -73,8 +73,12 @@ set_target_properties(mithril PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/output
 )
 
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT APPLE AND NOT ANDROID)
     # Linux: plain shared library for local dev loop.
+elseif(ANDROID)
+    # Android: system Vulkan loader (libvulkan.so) + ANativeWindow surface.
+    target_compile_definitions(mithril PUBLIC VK_USE_PLATFORM_ANDROID_KHR=1)
+    target_link_libraries(mithril PUBLIC log)
 elseif(APPLE AND MITHRIL_IOS)
     target_compile_definitions(mithril PUBLIC MITHRIL_IOS=1 VK_USE_PLATFORM_METAL_EXT=1)
     target_link_libraries(mithril PUBLIC
